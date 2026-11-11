@@ -3387,8 +3387,8 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 android.util.Log.d("NightjarGyroDiagnostic",
                         "controller=" + controllerNumber
                         + " type=" + (motionType == MoonBridge.LI_MOTION_TYPE_GYRO ? "gyro" : "accel")
-                        + " sensor=" + sensorEvent.sensor.getName()
-                        + " vendor=" + sensorEvent.sensor.getVendor()
+                        + " sensor=" + (sensorEvent.sensor != null ? sensorEvent.sensor.getName() : "unknown")
+                        + " vendor=" + (sensorEvent.sensor != null ? sensorEvent.sensor.getVendor() : "unknown")
                         + " rawX=" + sensorEvent.values[0]
                         + " rawY=" + sensorEvent.values[1]
                         + " rawZ=" + sensorEvent.values[2]);
