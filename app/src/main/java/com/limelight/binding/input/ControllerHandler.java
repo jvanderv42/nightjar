@@ -3425,12 +3425,19 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                     return;
                 }
                 if (motionType == MoonBridge.LI_MOTION_TYPE_GYRO) {
-                    // Convert from rad/s to deg/s
+                    // Normalize the Android sensor coordinate frame first. The identity
+                    // mapping preserves existing controllers until a measured correction
+                    // profile is selected for a specific device.
+                    float[] corrected = GyroAxisTransformer.identity().transform(
+                            sensorEvent.values[x] * xFactor,
+                            sensorEvent.values[y] * yFactor,
+                            sensorEvent.values[z] * zFactor);
+                    // Convert from rad/s to deg/s after applying the axis mapping.
                     conn.sendControllerMotionEvent((byte) controllerNumber,
                             motionType,
-                            sensorEvent.values[x] * xFactor * 57.2957795f,
-                            sensorEvent.values[y] * yFactor * 57.2957795f,
-                            sensorEvent.values[z] * zFactor * 57.2957795f);
+                            corrected[0] * 57.2957795f,
+                            corrected[1] * 57.2957795f,
+                            corrected[2] * 57.2957795f);
                 }
                 else {
                     // Pass m/s^2 directly without conversion
