@@ -3338,6 +3338,8 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         private final InputDeviceContext livenessContext;
         // Only the thread delivering the events reads and writes these.
         private final float[] lastValues = new float[3];
+        // Limit debug diagnostics to 36 distinct samples per sensor listener.
+        private int diagnosticSamples;
         private final GyroLivenessTracker liveness;
         // Set by closeMotionListener() on the thread that unregisters this listener.
         volatile boolean closed;
@@ -3375,6 +3377,18 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 lastValues[0] = sensorEvent.values[0];
                 lastValues[1] = sensorEvent.values[1];
                 lastValues[2] = sensorEvent.values[2];
+            }
+
+            if (com.limelight.BuildConfig.DEBUG && diagnosticSamples < 36) {
+                diagnosticSamples++;
+                android.util.Log.d("NightjarGyroDiagnostic",
+                        "controller=" + controllerNumber
+                        + " type=" + (motionType == MoonBridge.LI_MOTION_TYPE_GYRO ? "gyro" : "accel")
+                        + " sensor=" + sensorEvent.sensor.getName()
+                        + " vendor=" + sensorEvent.sensor.getVendor()
+                        + " rawX=" + sensorEvent.values[0]
+                        + " rawY=" + sensorEvent.values[1]
+                        + " rawZ=" + sensorEvent.values[2]);
             }
 
             int x = 0;
