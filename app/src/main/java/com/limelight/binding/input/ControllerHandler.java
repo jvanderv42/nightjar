@@ -3340,6 +3340,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         private final float[] lastValues = new float[3];
         // Limit debug diagnostics to 36 distinct samples per sensor listener.
         private int diagnosticSamples;
+        private int diagnosticEvents;
         private final GyroLivenessTracker liveness;
         // Set by closeMotionListener() on the thread that unregisters this listener.
         volatile boolean closed;
@@ -3379,7 +3380,9 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 lastValues[2] = sensorEvent.values[2];
             }
 
-            if (com.limelight.BuildConfig.DEBUG && diagnosticSamples < 36) {
+            // Spread samples across several seconds rather than exhausting them at startup.
+            if (com.limelight.BuildConfig.DEBUG && diagnosticSamples < 36
+                    && ++diagnosticEvents % 20 == 1) {
                 diagnosticSamples++;
                 android.util.Log.d("NightjarGyroDiagnostic",
                         "controller=" + controllerNumber
