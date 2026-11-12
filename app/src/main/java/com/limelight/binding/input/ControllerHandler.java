@@ -3445,7 +3445,9 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                     // Normalize the Android sensor coordinate frame first. The identity
                     // mapping preserves existing controllers until a measured correction
                     // profile is selected for a specific device.
-                    float[] corrected = GyroAxisTransformer.identity().transform(
+                    float[] corrected = (GyroDiagnosticOverlay.isFlydigiCandidateEnabled()
+                            ? new GyroAxisTransformer(1, 2, 0, 1, 1, 1)
+                            : GyroAxisTransformer.identity()).transform(
                             sensorEvent.values[x] * xFactor,
                             sensorEvent.values[y] * yFactor,
                             sensorEvent.values[z] * zFactor);
@@ -4602,8 +4604,14 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                         + " controller=" + context.controllerNumber
                         + " type=gyro rawX=" + x + " rawY=" + y + " rawZ=" + z);
             }
-            GyroDiagnosticOverlay.report("usb", context.controllerNumber, motionType, x, y, z);
-            conn.sendControllerMotionEvent((byte)context.controllerNumber, motionType, x, y, z);
+            float[] corrected = motionType == MoonBridge.LI_MOTION_TYPE_GYRO
+                    && GyroDiagnosticOverlay.isFlydigiCandidateEnabled()
+                    ? new GyroAxisTransformer(1, 2, 0, 1, 1, 1).transform(x, y, z)
+                    : new float[] {x, y, z};
+            GyroDiagnosticOverlay.report("usb", context.controllerNumber, motionType,
+                    corrected[0], corrected[1], corrected[2]);
+            conn.sendControllerMotionEvent((byte)context.controllerNumber, motionType,
+                    corrected[0], corrected[1], corrected[2]);
         }
     }
 
