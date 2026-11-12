@@ -3381,11 +3381,11 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             }
 
             // Spread samples across several seconds rather than exhausting them at startup.
-            if (com.limelight.BuildConfig.DEBUG && diagnosticSamples < 36
+            if (diagnosticSamples < 36
                     && ++diagnosticEvents % 20 == 1) {
                 diagnosticSamples++;
-                android.util.Log.d("NightjarGyroDiagnostic",
-                        "controller=" + controllerNumber
+                android.util.Log.i("NightjarGyroDiagnostic",
+                        "path=sensor controller=" + controllerNumber
                         + " type=" + (motionType == MoonBridge.LI_MOTION_TYPE_GYRO ? "gyro" : "accel")
                         + " sensor=" + (sensorEvent.sensor != null ? sensorEvent.sensor.getName() : "unknown")
                         + " vendor=" + (sensorEvent.sensor != null ? sensorEvent.sensor.getVendor() : "unknown")
@@ -4582,11 +4582,20 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         }
     }
 
+    private int usbMotionDiagnosticSamples;
+
     @Override
     public void reportControllerMotion(int controllerId, byte motionType, float x, float y, float z) {
         UsbDeviceContext context = usbDeviceContexts.get(controllerId);
         if (!stopped && inputEnabled && sensorsEnabled && prefConfig.gamepadMotionSensors && context != null &&
                 context.assignedControllerNumber && !dropsMotionAndTouchpad(context.buttonMap)) {
+            if (motionType == MoonBridge.LI_MOTION_TYPE_GYRO && usbMotionDiagnosticSamples < 36) {
+                usbMotionDiagnosticSamples++;
+                android.util.Log.i("NightjarGyroDiagnostic",
+                        "path=usb controllerId=" + controllerId
+                        + " controller=" + context.controllerNumber
+                        + " type=gyro rawX=" + x + " rawY=" + y + " rawZ=" + z);
+            }
             conn.sendControllerMotionEvent((byte)context.controllerNumber, motionType, x, y, z);
         }
     }
