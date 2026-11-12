@@ -27,6 +27,12 @@ public final class GyroDiagnosticOverlay {
     private static final Handler mainHandler = new Handler(Looper.getMainLooper());
     private static volatile String latest = "Waiting for controller motion...";
     private static volatile boolean recording;
+    private static volatile boolean flydigiCandidateEnabled;
+
+    /** Manual test setting; never enabled automatically. */
+    static boolean isFlydigiCandidateEnabled() {
+        return flydigiCandidateEnabled;
+    }
     private static volatile TextView display;
     private static volatile Activity activity;
     private static volatile boolean visible = true;
@@ -78,6 +84,14 @@ public final class GyroDiagnosticOverlay {
         });
         buttons.addView(capture);
 
+        Button mapping = new Button(host);
+        mapping.setText("Mapping: Identity");
+        mapping.setOnClickListener(v -> {
+            flydigiCandidateEnabled = !flydigiCandidateEnabled;
+            mapping.setText(flydigiCandidateEnabled ? "Mapping: Flydigi XYZ" : "Mapping: Identity");
+        });
+        buttons.addView(mapping);
+
         Button share = new Button(host);
         share.setText("Share CSV");
         share.setOnClickListener(v -> {
@@ -100,6 +114,7 @@ public final class GyroDiagnosticOverlay {
             label.setVisibility(visible ? View.VISIBLE : View.GONE);
             capture.setVisibility(visible ? View.VISIBLE : View.GONE);
             share.setVisibility(visible ? View.VISIBLE : View.GONE);
+            mapping.setVisibility(visible ? View.VISIBLE : View.GONE);
             hide.setText(visible ? "Hide" : "Show");
         });
         buttons.addView(hide);
@@ -130,6 +145,7 @@ public final class GyroDiagnosticOverlay {
             display = null;
             activity = null;
             recording = false;
+            flydigiCandidateEnabled = false;
         }
     }
 }
