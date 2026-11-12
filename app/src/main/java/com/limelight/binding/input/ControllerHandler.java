@@ -3449,6 +3449,9 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                             sensorEvent.values[x] * xFactor,
                             sensorEvent.values[y] * yFactor,
                             sensorEvent.values[z] * zFactor);
+                    GyroDiagnosticOverlay.report("sensor", controllerNumber, motionType,
+                            corrected[0] * 57.2957795f, corrected[1] * 57.2957795f,
+                            corrected[2] * 57.2957795f);
                     // Convert from rad/s to deg/s after applying the axis mapping.
                     conn.sendControllerMotionEvent((byte) controllerNumber,
                             motionType,
@@ -3457,6 +3460,9 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                             corrected[2] * 57.2957795f);
                 }
                 else {
+                    GyroDiagnosticOverlay.report("sensor", controllerNumber, motionType,
+                            sensorEvent.values[x] * xFactor, sensorEvent.values[y] * yFactor,
+                            sensorEvent.values[z] * zFactor);
                     // Pass m/s^2 directly without conversion
                     conn.sendControllerMotionEvent((byte) controllerNumber,
                             motionType,
@@ -4596,6 +4602,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                         + " controller=" + context.controllerNumber
                         + " type=gyro rawX=" + x + " rawY=" + y + " rawZ=" + z);
             }
+            GyroDiagnosticOverlay.report("usb", context.controllerNumber, motionType, x, y, z);
             conn.sendControllerMotionEvent((byte)context.controllerNumber, motionType, x, y, z);
         }
     }
