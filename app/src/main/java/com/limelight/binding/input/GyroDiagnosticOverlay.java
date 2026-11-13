@@ -86,10 +86,10 @@ public final class GyroDiagnosticOverlay {
         buttons.addView(capture);
 
         Button mapping = new Button(host);
-        mapping.setText("Mapping: Identity");
+        mapping.setText("Override: Auto/settings");
         mapping.setOnClickListener(v -> {
             flydigiCandidateEnabled = !flydigiCandidateEnabled;
-            mapping.setText(flydigiCandidateEnabled ? "Mapping: Flydigi XYZ" : "Mapping: Identity");
+            mapping.setText(flydigiCandidateEnabled ? "Override: Force Flydigi XYZ" : "Override: Auto/settings");
         });
         buttons.addView(mapping);
 
