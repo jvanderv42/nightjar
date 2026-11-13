@@ -138,7 +138,6 @@ public final class GyroProfileEditor {
                     Toast.makeText(activity, "Gyro profile deleted", Toast.LENGTH_SHORT).show();
                 })
                 .setNegativeButton(android.R.string.cancel, null)
-                .startOnCancel()
                 .show();
     }
 
