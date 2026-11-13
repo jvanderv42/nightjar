@@ -2,13 +2,13 @@ package com.limelight.binding.input;
 
 import android.app.Application;
 
-import androidx.test.core.app.ApplicationProvider;
 
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
+import org.robolectric.RuntimeEnvironment;
 
 import static org.junit.Assert.*;
 
@@ -17,7 +17,7 @@ public class GyroMappingPreferencesTest {
     private Application app;
 
     @Before public void setUp() {
-        app = ApplicationProvider.getApplicationContext();
+        app = RuntimeEnvironment.getApplication();
         app.getSharedPreferences("nightjar_gyro_mapping", 0).edit().clear().commit();
     }
 
