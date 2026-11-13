@@ -200,12 +200,35 @@ public final class GyroProfileEditor {
         float[] sensitivity = {source == null ? 1f : source.horizontalSensitivity,
                 source == null ? 1f : source.verticalSensitivity};
         String[] sensitivityLabels = {"Horizontal sensitivity", "Vertical sensitivity"};
+        // Give the custom dialog explicit on-surface text colors: on some devices the
+        // default TextView foreground disappears against Nightjar's glass panel.
+        int labelColor = com.google.android.material.color.MaterialColors.getColor(
+                column, com.google.android.material.R.attr.colorOnSurface);
         for (int i = 0; i < sensitivityLabels.length; i++) {
             final int axisIndex = i;
+            LinearLayout heading = new LinearLayout(activity);
+            heading.setOrientation(LinearLayout.HORIZONTAL);
+            heading.setGravity(android.view.Gravity.CENTER_VERTICAL);
+            LinearLayout.LayoutParams headingParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            headingParams.topMargin = pad;
+            column.addView(heading, headingParams);
+
+            TextView axisLabel = new TextView(activity);
+            axisLabel.setText(sensitivityLabels[i]);
+            axisLabel.setTextColor(labelColor);
+            axisLabel.setTextSize(16);
+            axisLabel.setTypeface(null, android.graphics.Typeface.BOLD);
+            heading.addView(axisLabel, new LinearLayout.LayoutParams(
+                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+
             TextView valueLabel = new TextView(activity);
-            valueLabel.setText(String.format(Locale.US, "%s: %.2f×",
-                    sensitivityLabels[i], sensitivity[i]));
-            column.addView(valueLabel);
+            valueLabel.setText(String.format(Locale.US, "%.2f×", sensitivity[i]));
+            valueLabel.setTextColor(labelColor);
+            valueLabel.setTextSize(16);
+            valueLabel.setTypeface(null, android.graphics.Typeface.BOLD);
+            valueLabel.setGravity(android.view.Gravity.END);
+            heading.addView(valueLabel);
 
             SeekBar seekBar = new SeekBar(activity);
             seekBar.setMax(58);
@@ -214,13 +237,31 @@ public final class GyroProfileEditor {
             seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
                 @Override public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
                     sensitivity[axisIndex] = (progress + 2) / 20f;
-                    valueLabel.setText(String.format(Locale.US, "%s: %.2f×",
+                    valueLabel.setText(String.format(Locale.US, "%.2f×", sensitivity[axisIndex]));
+                    bar.setContentDescription(String.format(Locale.US, "%s: %.2f×",
                             sensitivityLabels[axisIndex], sensitivity[axisIndex]));
                 }
                 @Override public void onStartTrackingTouch(SeekBar bar) {}
                 @Override public void onStopTrackingTouch(SeekBar bar) {}
             });
-            column.addView(seekBar);
+            column.addView(seekBar, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+            LinearLayout limits = new LinearLayout(activity);
+            limits.setOrientation(LinearLayout.HORIZONTAL);
+            TextView minimum = new TextView(activity);
+            minimum.setText("Min 0.10×");
+            minimum.setTextColor(labelColor);
+            limits.addView(minimum, new LinearLayout.LayoutParams(
+                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+            TextView maximum = new TextView(activity);
+            maximum.setText("Max 3.00×");
+            maximum.setTextColor(labelColor);
+            maximum.setGravity(android.view.Gravity.END);
+            limits.addView(maximum, new LinearLayout.LayoutParams(
+                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+            column.addView(limits, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         }
 
         ScrollView scroll = new ScrollView(activity);
