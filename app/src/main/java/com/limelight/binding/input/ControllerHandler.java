@@ -3320,22 +3320,20 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         context.enableSensorRunnable.run();
     }
 
-    // Resolve motion for the controller slot that owns the sensor; unknown pads stay unmodified.
-    private boolean useFlydigiGyro(short controllerNumber) {
+    // Use the physical sensor owner's descriptor, never a shared host controller slot.
+    // Tablet fallback sensors have no Flydigi profile, even when replacing a pad's gyro.
+    private boolean useFlydigiGyro(InputDeviceContext sensorOwner) {
         if (GyroDiagnosticOverlay.isFlydigiCandidateEnabled()) return true; // debug-only override
-        for (InputDeviceContext context : inputDeviceContexts.values()) {
-            if (context.assignedControllerNumber && context.controllerNumber == controllerNumber
-                    && GyroMappingPreferences.shouldUseFlydigi(activityContext, context.inputDevice)) {
-                return true;
-            }
-        }
-        return false;
+        return sensorOwner != null && sensorOwner.sensorManager != deviceSensorManager
+                && GyroMappingPreferences.shouldUseFlydigi(activityContext, sensorOwner.inputDevice);
     }
 
     private MotionListener createSensorListener(final short controllerNumber, final byte motionType,
                                                 final boolean needsDeviceOrientationCorrection,
-                                                final InputDeviceContext livenessContext) {
-        return new MotionListener(controllerNumber, motionType, needsDeviceOrientationCorrection, livenessContext);
+                                                final InputDeviceContext livenessContext,
+                                                final InputDeviceContext sensorOwner) {
+        return new MotionListener(controllerNumber, motionType, needsDeviceOrientationCorrection,
+                livenessContext, sensorOwner);
     }
 
     /**
@@ -3348,6 +3346,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         private final byte motionType;
         private final boolean needsDeviceOrientationCorrection;
         private final InputDeviceContext livenessContext;
+        private final InputDeviceContext sensorOwner;
         // Only the thread delivering the events reads and writes these.
         private final float[] lastValues = new float[3];
         // Limit debug diagnostics to 36 distinct samples per sensor listener.
@@ -3360,11 +3359,12 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         boolean holdsRotation;
 
         MotionListener(short controllerNumber, byte motionType, boolean needsDeviceOrientationCorrection,
-                       InputDeviceContext livenessContext) {
+                       InputDeviceContext livenessContext, InputDeviceContext sensorOwner) {
             this.controllerNumber = controllerNumber;
             this.motionType = motionType;
             this.needsDeviceOrientationCorrection = needsDeviceOrientationCorrection;
             this.livenessContext = livenessContext;
+            this.sensorOwner = sensorOwner;
             this.liveness = livenessContext != null ? new GyroLivenessTracker() : null;
         }
 
@@ -3457,7 +3457,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                     // Normalize the Android sensor coordinate frame first. The identity
                     // mapping preserves existing controllers until a measured correction
                     // profile is selected for a specific device.
-                    float[] corrected = (useFlydigiGyro(controllerNumber)
+                    float[] corrected = (useFlydigiGyro(sensorOwner)
                             ? new GyroAxisTransformer(1, 2, 0, -1, 1, 1)
                             : GyroAxisTransformer.identity()).transform(
                             sensorEvent.values[x] * xFactor,
@@ -3550,7 +3550,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                         // Enable the accelerometer if requested
                         Sensor accelSensor = sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
                         if (sensorsEnabled && reportRateHz != 0 && accelSensor != null) {
-                            deviceContext.accelListener = createSensorListener(controllerNumber, motionType, sm == deviceSensorManager, null);
+                            deviceContext.accelListener = createSensorListener(controllerNumber, motionType, sm == deviceSensorManager, null, deviceContext);
                             registerMotionListener(sm, accelSensor, deviceContext.accelListener, 1000000 / reportRateHz);
                         }
                         break;
@@ -3564,7 +3564,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                         Sensor gyroSensor = sm.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
                         if (sensorsEnabled && reportRateHz != 0 && gyroSensor != null) {
                             deviceContext.gyroListener = createSensorListener(controllerNumber, motionType, sm == deviceSensorManager,
-                                    checksGyroLiveness(controllerNumber, sm) ? deviceContext : null);
+                                    checksGyroLiveness(controllerNumber, sm) ? deviceContext : null, deviceContext);
                             registerMotionListener(sm, gyroSensor, deviceContext.gyroListener, 1000000 / reportRateHz);
                         }
                         break;
@@ -4617,7 +4617,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                         + " type=gyro rawX=" + x + " rawY=" + y + " rawZ=" + z);
             }
             float[] corrected = motionType == MoonBridge.LI_MOTION_TYPE_GYRO
-                    && useFlydigiGyro(context.controllerNumber)
+                    && GyroDiagnosticOverlay.isFlydigiCandidateEnabled()
                     ? new GyroAxisTransformer(1, 2, 0, -1, 1, 1).transform(x, y, z)
                     : new float[] {x, y, z};
             GyroDiagnosticOverlay.report("usb", context.controllerNumber, motionType,
@@ -5291,7 +5291,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             short rate = gyro ? gyroReportRateHz : accelReportRateHz;
             Sensor sensor = deviceSensors.getDefaultSensor(gyro ? Sensor.TYPE_GYROSCOPE : Sensor.TYPE_ACCELEROMETER);
             if (!stopped && sensorsEnabled && rate != 0 && sensor != null) {
-                listener = createSensorListener(controllerNumber, motionType, true, null);
+                listener = createSensorListener(controllerNumber, motionType, true, null, null);
                 registerMotionListener(deviceSensors, sensor, listener, 1000000 / rate);
             }
             if (gyro) gyroListener = listener;
