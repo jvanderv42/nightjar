@@ -9,9 +9,24 @@ package com.limelight.binding.input;
 final class GyroAxisTransformer {
     private final int[] sourceAxes;
     private final int[] signs;
+    private final float horizontalSensitivity;
+    private final float verticalSensitivity;
 
     GyroAxisTransformer(int xAxis, int yAxis, int zAxis,
                         int xSign, int ySign, int zSign) {
+        this(xAxis, yAxis, zAxis, xSign, ySign, zSign, 1f, 1f);
+    }
+
+    GyroAxisTransformer(int xAxis, int yAxis, int zAxis,
+                        int xSign, int ySign, int zSign,
+                        float horizontalSensitivity, float verticalSensitivity) {
+        if (!Float.isFinite(horizontalSensitivity) || !Float.isFinite(verticalSensitivity)
+                || horizontalSensitivity < 0.1f || horizontalSensitivity > 3f
+                || verticalSensitivity < 0.1f || verticalSensitivity > 3f) {
+            throw new IllegalArgumentException("Sensitivity must be between 0.10 and 3.00");
+        }
+        this.horizontalSensitivity = horizontalSensitivity;
+        this.verticalSensitivity = verticalSensitivity;
         sourceAxes = new int[] {xAxis, yAxis, zAxis};
         signs = new int[] {xSign, ySign, zSign};
         boolean[] seen = new boolean[3];
@@ -35,8 +50,8 @@ final class GyroAxisTransformer {
     float[] transform(float x, float y, float z) {
         float[] input = {x, y, z};
         return new float[] {
-                input[sourceAxes[0]] * signs[0],
-                input[sourceAxes[1]] * signs[1],
+                input[sourceAxes[0]] * signs[0] * verticalSensitivity,
+                input[sourceAxes[1]] * signs[1] * horizontalSensitivity,
                 input[sourceAxes[2]] * signs[2]
         };
     }
