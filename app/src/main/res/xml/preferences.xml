@@ -259,6 +259,11 @@
             android:key="controller_test"
             android:title="@string/controller_test_title"
             android:summary="@string/controller_test_summary" />
+        <Preference
+            android:key="gyro_mapping_profiles"
+            android:title="Gyroscope Mapping"
+            android:summary="Automatic detection and manual mapping for connected controllers"
+            android:persistent="false" />
         <com.limelight.preferences.MaterialListPreference
             android:key="list_gamepad_quit_combo"
             android:title="@string/title_list_gamepad_quit_combo"
