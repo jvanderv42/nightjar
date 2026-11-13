@@ -3366,10 +3366,19 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         context.enableSensorRunnable.run();
     }
 
+    // Motion profile is fixed per listener; device fallback sensors keep identity mapping.
+    private GyroAxisTransformer controllerGyroTransformer(InputDeviceContext sensorOwner) {
+        return sensorOwner != null && sensorOwner.sensorManager != deviceSensorManager
+                ? GyroMappingPreferences.transformer(activityContext, sensorOwner.inputDevice)
+                : GyroAxisTransformer.identity();
+    }
+
     private MotionListener createSensorListener(final short controllerNumber, final byte motionType,
                                                 final boolean needsDeviceOrientationCorrection,
-                                                final InputDeviceContext livenessContext) {
-        return new MotionListener(controllerNumber, motionType, needsDeviceOrientationCorrection, livenessContext);
+                                                final InputDeviceContext livenessContext,
+                                                final InputDeviceContext sensorOwner) {
+        return new MotionListener(controllerNumber, motionType, needsDeviceOrientationCorrection,
+                livenessContext, sensorOwner);
     }
 
     /**
@@ -3382,6 +3391,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         private final byte motionType;
         private final boolean needsDeviceOrientationCorrection;
         private final InputDeviceContext livenessContext;
+        private final GyroAxisTransformer profileTransformer;
         // Only the thread delivering the events reads and writes these.
         private final float[] lastValues = new float[3];
         private final GyroLivenessTracker liveness;
@@ -3391,11 +3401,12 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         boolean holdsRotation;
 
         MotionListener(short controllerNumber, byte motionType, boolean needsDeviceOrientationCorrection,
-                       InputDeviceContext livenessContext) {
+                       InputDeviceContext livenessContext, InputDeviceContext sensorOwner) {
             this.controllerNumber = controllerNumber;
             this.motionType = motionType;
             this.needsDeviceOrientationCorrection = needsDeviceOrientationCorrection;
             this.livenessContext = livenessContext;
+            this.profileTransformer = controllerGyroTransformer(sensorOwner);
             this.liveness = livenessContext != null ? new GyroLivenessTracker() : null;
         }
 
@@ -3471,12 +3482,20 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                     return;
                 }
                 if (motionType == MoonBridge.LI_MOTION_TYPE_GYRO) {
-                    // Convert from rad/s to deg/s
+                    float[] corrected = (GyroDiagnosticOverlay.isFlydigiCandidateEnabled()
+                            ? new GyroAxisTransformer(1, 2, 0, -1, 1, 1)
+                            : profileTransformer).transform(
+                            sensorEvent.values[x] * xFactor,
+                            sensorEvent.values[y] * yFactor,
+                            sensorEvent.values[z] * zFactor);
+                    GyroDiagnosticOverlay.report("sensor", controllerNumber, motionType,
+                            corrected[0] * 57.2957795f, corrected[1] * 57.2957795f,
+                            corrected[2] * 57.2957795f);
                     conn.sendControllerMotionEvent((byte) controllerNumber,
                             motionType,
-                            sensorEvent.values[x] * xFactor * 57.2957795f,
-                            sensorEvent.values[y] * yFactor * 57.2957795f,
-                            sensorEvent.values[z] * zFactor * 57.2957795f);
+                            corrected[0] * 57.2957795f,
+                            corrected[1] * 57.2957795f,
+                            corrected[2] * 57.2957795f);
                 }
                 else {
                     // Pass m/s^2 directly without conversion
@@ -3552,7 +3571,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                         // Enable the accelerometer if requested
                         Sensor accelSensor = sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
                         if (sensorsEnabled && reportRateHz != 0 && accelSensor != null) {
-                            deviceContext.accelListener = createSensorListener(controllerNumber, motionType, sm == deviceSensorManager, null);
+                            deviceContext.accelListener = createSensorListener(controllerNumber, motionType, sm == deviceSensorManager, null, deviceContext);
                             registerMotionListener(sm, accelSensor, deviceContext.accelListener, 1000000 / reportRateHz);
                         }
                         break;
@@ -3566,7 +3585,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                         Sensor gyroSensor = sm.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
                         if (sensorsEnabled && reportRateHz != 0 && gyroSensor != null) {
                             deviceContext.gyroListener = createSensorListener(controllerNumber, motionType, sm == deviceSensorManager,
-                                    checksGyroLiveness(controllerNumber, sm) ? deviceContext : null);
+                                    checksGyroLiveness(controllerNumber, sm) ? deviceContext : null, deviceContext);
                             registerMotionListener(sm, gyroSensor, deviceContext.gyroListener, 1000000 / reportRateHz);
                         }
                         break;
@@ -4620,7 +4639,14 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         UsbDeviceContext context = usbDeviceContexts.get(controllerId);
         if (!stopped && inputEnabled && sensorsEnabled && prefConfig.gamepadMotionSensors && context != null &&
                 context.assignedControllerNumber && !dropsMotionAndTouchpad(context.buttonMap)) {
-            conn.sendControllerMotionEvent((byte)context.controllerNumber, motionType, x, y, z);
+            float[] corrected = motionType == MoonBridge.LI_MOTION_TYPE_GYRO
+                    && GyroDiagnosticOverlay.isFlydigiCandidateEnabled()
+                    ? new GyroAxisTransformer(1, 2, 0, -1, 1, 1).transform(x, y, z)
+                    : new float[] {x, y, z};
+            GyroDiagnosticOverlay.report("usb", context.controllerNumber, motionType,
+                    corrected[0], corrected[1], corrected[2]);
+            conn.sendControllerMotionEvent((byte)context.controllerNumber, motionType,
+                    corrected[0], corrected[1], corrected[2]);
         }
     }
 

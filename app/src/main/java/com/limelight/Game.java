@@ -593,6 +593,9 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
         // One connection to a PC at a time: a stream ends Microphone only, whose close it then waits for.
         com.limelight.mic.MicOnlyService.stop(this);
         streamConnection.onCreate(savedInstanceState);
+        if (BuildConfig.DEBUG) {
+            com.limelight.binding.input.GyroDiagnosticOverlay.attach(this);
+        }
     }
 
     static boolean isValidLaunch(String host, int port, String uniqueId, int appId, String appUuid) {
