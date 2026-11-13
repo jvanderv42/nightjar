@@ -3320,6 +3320,18 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         context.enableSensorRunnable.run();
     }
 
+    // Resolve motion for the controller slot that owns the sensor; unknown pads stay unmodified.
+    private boolean useFlydigiGyro(short controllerNumber) {
+        if (GyroDiagnosticOverlay.isFlydigiCandidateEnabled()) return true; // debug-only override
+        for (InputDeviceContext context : inputDeviceContexts.values()) {
+            if (context.assignedControllerNumber && context.controllerNumber == controllerNumber
+                    && GyroMappingPreferences.shouldUseFlydigi(activityContext, context.inputDevice)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private MotionListener createSensorListener(final short controllerNumber, final byte motionType,
                                                 final boolean needsDeviceOrientationCorrection,
                                                 final InputDeviceContext livenessContext) {
@@ -3445,7 +3457,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                     // Normalize the Android sensor coordinate frame first. The identity
                     // mapping preserves existing controllers until a measured correction
                     // profile is selected for a specific device.
-                    float[] corrected = (GyroDiagnosticOverlay.isFlydigiCandidateEnabled()
+                    float[] corrected = (useFlydigiGyro(controllerNumber)
                             ? new GyroAxisTransformer(1, 2, 0, -1, 1, 1)
                             : GyroAxisTransformer.identity()).transform(
                             sensorEvent.values[x] * xFactor,
@@ -4605,7 +4617,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                         + " type=gyro rawX=" + x + " rawY=" + y + " rawZ=" + z);
             }
             float[] corrected = motionType == MoonBridge.LI_MOTION_TYPE_GYRO
-                    && GyroDiagnosticOverlay.isFlydigiCandidateEnabled()
+                    && useFlydigiGyro(context.controllerNumber)
                     ? new GyroAxisTransformer(1, 2, 0, -1, 1, 1).transform(x, y, z)
                     : new float[] {x, y, z};
             GyroDiagnosticOverlay.report("usb", context.controllerNumber, motionType,
