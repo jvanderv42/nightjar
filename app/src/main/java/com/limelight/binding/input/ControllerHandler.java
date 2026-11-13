@@ -3446,7 +3446,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                     // mapping preserves existing controllers until a measured correction
                     // profile is selected for a specific device.
                     float[] corrected = (GyroDiagnosticOverlay.isFlydigiCandidateEnabled()
-                            ? new GyroAxisTransformer(1, 2, 0, 1, 1, 1)
+                            ? new GyroAxisTransformer(1, 2, 0, -1, 1, 1)
                             : GyroAxisTransformer.identity()).transform(
                             sensorEvent.values[x] * xFactor,
                             sensorEvent.values[y] * yFactor,
@@ -4606,7 +4606,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             }
             float[] corrected = motionType == MoonBridge.LI_MOTION_TYPE_GYRO
                     && GyroDiagnosticOverlay.isFlydigiCandidateEnabled()
-                    ? new GyroAxisTransformer(1, 2, 0, 1, 1, 1).transform(x, y, z)
+                    ? new GyroAxisTransformer(1, 2, 0, -1, 1, 1).transform(x, y, z)
                     : new float[] {x, y, z};
             GyroDiagnosticOverlay.report("usb", context.controllerNumber, motionType,
                     corrected[0], corrected[1], corrected[2]);
