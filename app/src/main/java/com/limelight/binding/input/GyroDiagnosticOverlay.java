@@ -7,6 +7,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
+import android.view.InputDevice;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -92,6 +93,34 @@ public final class GyroDiagnosticOverlay {
         });
         buttons.addView(mapping);
 
+        // Inspect Android's actual controller identifiers before enabling automatic matching.
+        Button identify = new Button(host);
+        identify.setText("Identify controllers");
+        identify.setOnClickListener(v -> {
+            StringBuilder devices = new StringBuilder("ANDROID INPUT DEVICES");
+            for (int deviceId : InputDevice.getDeviceIds()) {
+                InputDevice device = InputDevice.getDevice(deviceId);
+                if (device == null) continue;
+                int sources = device.getSources();
+                if ((sources & InputDevice.SOURCE_GAMEPAD) != InputDevice.SOURCE_GAMEPAD
+                        && (sources & InputDevice.SOURCE_JOYSTICK) != InputDevice.SOURCE_JOYSTICK) {
+                    continue;
+                }
+                devices.append("\\nID=").append(deviceId)
+                        .append(" name=").append(device.getName())
+                        .append(" VID=").append(device.getVendorId())
+                        .append(" PID=").append(device.getProductId())
+                        .append(" descriptor=").append(device.getDescriptor())
+                        .append(" sources=0x").append(Integer.toHexString(sources));
+            }
+            latest = devices.toString();
+            synchronized (lock) {
+                // Include the identifiers in the shareable diagnostic output.
+                rows.add("# " + devices.toString().replace("\\n", " | "));
+            }
+        });
+        buttons.addView(identify);
+
         Button share = new Button(host);
         share.setText("Share CSV");
         share.setOnClickListener(v -> {
@@ -115,6 +144,7 @@ public final class GyroDiagnosticOverlay {
             capture.setVisibility(visible ? View.VISIBLE : View.GONE);
             share.setVisibility(visible ? View.VISIBLE : View.GONE);
             mapping.setVisibility(visible ? View.VISIBLE : View.GONE);
+            identify.setVisibility(visible ? View.VISIBLE : View.GONE);
             hide.setText(visible ? "Hide" : "Show");
         });
         buttons.addView(hide);
