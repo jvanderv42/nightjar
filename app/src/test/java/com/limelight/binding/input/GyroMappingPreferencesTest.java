@@ -70,7 +70,7 @@ public class GyroMappingPreferencesTest {
         assertEquals(1f, original.horizontalSensitivity, 0f);
         assertEquals(1f, original.verticalSensitivity, 0f);
         app.getSharedPreferences("nightjar_gyro_mapping", 0).edit().putString("custom_profiles",
-                "[{\\\"id\\\":\\\"old\\\",\\\"name\\\":\\\"Old\\\",\\\"axes\\\":[0,1,2],\\\"signs\\\":[1,1,1]}]").commit();
+                "[{\"id\":\"old\",\"name\":\"Old\",\"axes\":[0,1,2],\"signs\":[1,1,1]}]").commit();
         GyroMappingPreferences.Profile restored = GyroMappingPreferences.profiles(app).get(0);
         assertEquals(1f, restored.horizontalSensitivity, 0f);
         assertEquals(1f, restored.verticalSensitivity, 0f);
