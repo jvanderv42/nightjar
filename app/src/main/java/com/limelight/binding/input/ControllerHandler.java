@@ -5320,7 +5320,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             short rate = gyro ? gyroReportRateHz : accelReportRateHz;
             Sensor sensor = deviceSensors.getDefaultSensor(gyro ? Sensor.TYPE_GYROSCOPE : Sensor.TYPE_ACCELEROMETER);
             if (!stopped && sensorsEnabled && rate != 0 && sensor != null) {
-                listener = createSensorListener(controllerNumber, motionType, true, null);
+                listener = createSensorListener(controllerNumber, motionType, true, null, null);
                 registerMotionListener(deviceSensors, sensor, listener, 1000000 / rate);
             }
             if (gyro) gyroListener = listener;
