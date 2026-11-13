@@ -2,6 +2,7 @@ package com.limelight.preferences;
 
 import android.app.Activity;
 import android.content.DialogInterface;
+import android.graphics.Color;
 import android.view.InputDevice;
 import android.view.ViewGroup;
 import android.widget.CheckBox;
@@ -27,6 +28,11 @@ import java.util.Locale;
 /** Settings dialogs for assigning and editing per-device gyro mapping profiles. */
 public final class GyroProfileEditor {
     private GyroProfileEditor() {}
+
+    // The profile dialog uses a dark glass background. Do not resolve these text
+    // colors from the Activity theme, which can provide dark-on-dark text.
+    private static final int PROFILE_TEXT_COLOR = Color.rgb(245, 247, 255);
+    private static final int PROFILE_SECONDARY_TEXT_COLOR = Color.rgb(210, 216, 231);
 
     public static void open(Activity activity) {
         ArrayList<InputDevice> devices = new ArrayList<>();
@@ -158,6 +164,7 @@ public final class GyroProfileEditor {
         hint.setText("Choose each output axis's source and whether to invert it. " +
                 "Each source axis must be used exactly once. " +
                 "Sensitivity adjusts the mapped camera yaw and pitch axes.");
+        hint.setTextColor(PROFILE_SECONDARY_TEXT_COLOR);
         column.addView(hint);
 
         EditText name = new EditText(activity);
@@ -176,6 +183,7 @@ public final class GyroProfileEditor {
 
             TextView label = new TextView(activity);
             label.setText("Output " + names[i] + " = ");
+            label.setTextColor(PROFILE_TEXT_COLOR);
             row.addView(label);
 
             Spinner axis = new Spinner(activity);
@@ -200,10 +208,6 @@ public final class GyroProfileEditor {
         float[] sensitivity = {source == null ? 1f : source.horizontalSensitivity,
                 source == null ? 1f : source.verticalSensitivity};
         String[] sensitivityLabels = {"Horizontal sensitivity", "Vertical sensitivity"};
-        // Give the custom dialog explicit on-surface text colors: on some devices the
-        // default TextView foreground disappears against Nightjar's glass panel.
-        int labelColor = com.google.android.material.color.MaterialColors.getColor(
-                column, com.google.android.material.R.attr.colorOnSurface);
         for (int i = 0; i < sensitivityLabels.length; i++) {
             final int axisIndex = i;
             LinearLayout heading = new LinearLayout(activity);
@@ -216,7 +220,7 @@ public final class GyroProfileEditor {
 
             TextView axisLabel = new TextView(activity);
             axisLabel.setText(sensitivityLabels[i]);
-            axisLabel.setTextColor(labelColor);
+            axisLabel.setTextColor(PROFILE_TEXT_COLOR);
             axisLabel.setTextSize(16);
             axisLabel.setTypeface(null, android.graphics.Typeface.BOLD);
             heading.addView(axisLabel, new LinearLayout.LayoutParams(
@@ -224,7 +228,7 @@ public final class GyroProfileEditor {
 
             TextView valueLabel = new TextView(activity);
             valueLabel.setText(String.format(Locale.US, "%.2f×", sensitivity[i]));
-            valueLabel.setTextColor(labelColor);
+            valueLabel.setTextColor(PROFILE_TEXT_COLOR);
             valueLabel.setTextSize(16);
             valueLabel.setTypeface(null, android.graphics.Typeface.BOLD);
             valueLabel.setGravity(android.view.Gravity.END);
@@ -251,12 +255,12 @@ public final class GyroProfileEditor {
             limits.setOrientation(LinearLayout.HORIZONTAL);
             TextView minimum = new TextView(activity);
             minimum.setText("Min 0.10×");
-            minimum.setTextColor(labelColor);
+            minimum.setTextColor(PROFILE_SECONDARY_TEXT_COLOR);
             limits.addView(minimum, new LinearLayout.LayoutParams(
                     0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
             TextView maximum = new TextView(activity);
             maximum.setText("Max 3.00×");
-            maximum.setTextColor(labelColor);
+            maximum.setTextColor(PROFILE_SECONDARY_TEXT_COLOR);
             maximum.setGravity(android.view.Gravity.END);
             limits.addView(maximum, new LinearLayout.LayoutParams(
                     0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
