@@ -46,8 +46,12 @@ public final class GyroProfileEditor {
                     }
                 }
             }
+            // Switch-mode Flydigi models both report "Pro Controller"; show a descriptor
+            // prefix so the two physical pads can be distinguished in the picker.
+            String descriptorLabel = device.getDescriptor().substring(0,
+                    Math.min(8, device.getDescriptor().length()));
             labels.add(device.getName() + " (" + device.getVendorId() + ":" +
-                    device.getProductId() + ") — " + display);
+                    device.getProductId() + ", " + descriptorLabel + ") — " + display);
         }
         labels.add("Manage custom profiles");
         new NavigationDialogBuilder(activity)
