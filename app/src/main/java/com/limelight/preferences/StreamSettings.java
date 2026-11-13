@@ -36,8 +36,6 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
-import android.view.InputDevice;
-import com.limelight.binding.input.GyroMappingPreferences;
 import android.widget.Toast;
 import com.limelight.ui.NavigationDialogBuilder;
 import android.content.res.XmlResourceParser;
@@ -2485,51 +2483,7 @@ public class StreamSettings extends NightjarActivity {
                 return true;
             });
             findPreference("gyro_mapping_profiles").setOnPreferenceClickListener(preference -> {
-                // Only list currently connected physical gamepads. Per-descriptor choices
-                // persist across disconnect/reconnect without using transient device IDs.
-                ArrayList<InputDevice> controllers = new ArrayList<>();
-                ArrayList<String> labels = new ArrayList<>();
-                for (int id : InputDevice.getDeviceIds()) {
-                    InputDevice device = InputDevice.getDevice(id);
-                    if (device == null || device.getDescriptor() == null) continue;
-                    int sources = device.getSources();
-                    if ((sources & InputDevice.SOURCE_GAMEPAD) != InputDevice.SOURCE_GAMEPAD
-                            && (sources & InputDevice.SOURCE_JOYSTICK) != InputDevice.SOURCE_JOYSTICK) continue;
-                    controllers.add(device);
-                    String choice = GyroMappingPreferences.getChoice(getActivity(), device.getDescriptor());
-                    labels.add(device.getName() + " (" + device.getVendorId() + ":" + device.getProductId()
-                            + ") — " + choice);
-                }
-                if (controllers.isEmpty()) {
-                    new AlertDialog.Builder(getActivity())
-                            .setTitle("Gyroscope Mapping")
-                            .setMessage("Connect a controller before configuring its gyro mapping.")
-                            .setPositiveButton(android.R.string.ok, null).show();
-                    return true;
-                }
-                new AlertDialog.Builder(getActivity())
-                        .setTitle("Select controller")
-                        .setItems(labels.toArray(new String[0]), (dialog, which) -> {
-                            InputDevice device = controllers.get(which);
-                            String descriptor = device.getDescriptor();
-                            String[] options = {"Automatic (recommended)", "Identity (standard)", "Flydigi XYZ"};
-                            String selected = GyroMappingPreferences.getChoice(getActivity(), descriptor);
-                            int selectedIndex = GyroMappingPreferences.IDENTITY.equals(selected) ? 1
-                                    : GyroMappingPreferences.FLYDIGI.equals(selected) ? 2 : 0;
-                            new AlertDialog.Builder(getActivity())
-                                    .setTitle(device.getName() + " gyro mapping")
-                                    .setSingleChoiceItems(options, selectedIndex, (choiceDialog, index) -> {
-                                        String value = index == 1 ? GyroMappingPreferences.IDENTITY
-                                                : index == 2 ? GyroMappingPreferences.FLYDIGI
-                                                : GyroMappingPreferences.AUTO;
-                                        GyroMappingPreferences.setChoice(getActivity(), descriptor, value);
-                                        choiceDialog.dismiss();
-                                    })
-                                    .setNegativeButton(android.R.string.cancel, null)
-                                    .show();
-                        })
-                        .setNegativeButton(android.R.string.cancel, null)
-                        .show();
+                GyroProfileEditor.open(getActivity());
                 return true;
             });
             findPreference("keyboard_shortcuts_editor").setOnPreferenceClickListener(preference -> {
