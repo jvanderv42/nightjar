@@ -3320,12 +3320,12 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         context.enableSensorRunnable.run();
     }
 
-    // Use the physical sensor owner's descriptor, never a shared host controller slot.
-    // Tablet fallback sensors have no Flydigi profile, even when replacing a pad's gyro.
-    private boolean useFlydigiGyro(InputDeviceContext sensorOwner) {
-        if (GyroDiagnosticOverlay.isFlydigiCandidateEnabled()) return true; // debug-only override
+    // Snapshot per-controller mapping when sensors are registered, not on every sensor sample.
+    // Device fallback motion remains unmodified, regardless of the controller's saved profile.
+    private GyroAxisTransformer controllerGyroTransformer(InputDeviceContext sensorOwner) {
         return sensorOwner != null && sensorOwner.sensorManager != deviceSensorManager
-                && GyroMappingPreferences.shouldUseFlydigi(activityContext, sensorOwner.inputDevice);
+                ? GyroMappingPreferences.transformer(activityContext, sensorOwner.inputDevice)
+                : GyroAxisTransformer.identity();
     }
 
     private MotionListener createSensorListener(final short controllerNumber, final byte motionType,
@@ -3346,7 +3346,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         private final byte motionType;
         private final boolean needsDeviceOrientationCorrection;
         private final InputDeviceContext livenessContext;
-        private final InputDeviceContext sensorOwner;
+        private final GyroAxisTransformer profileTransformer;
         // Only the thread delivering the events reads and writes these.
         private final float[] lastValues = new float[3];
         // Limit debug diagnostics to 36 distinct samples per sensor listener.
@@ -3364,7 +3364,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             this.motionType = motionType;
             this.needsDeviceOrientationCorrection = needsDeviceOrientationCorrection;
             this.livenessContext = livenessContext;
-            this.sensorOwner = sensorOwner;
+            this.profileTransformer = controllerGyroTransformer(sensorOwner);
             this.liveness = livenessContext != null ? new GyroLivenessTracker() : null;
         }
 
@@ -3457,9 +3457,9 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                     // Normalize the Android sensor coordinate frame first. The identity
                     // mapping preserves existing controllers until a measured correction
                     // profile is selected for a specific device.
-                    float[] corrected = (useFlydigiGyro(sensorOwner)
+                    float[] corrected = (GyroDiagnosticOverlay.isFlydigiCandidateEnabled()
                             ? new GyroAxisTransformer(1, 2, 0, -1, 1, 1)
-                            : GyroAxisTransformer.identity()).transform(
+                            : profileTransformer).transform(
                             sensorEvent.values[x] * xFactor,
                             sensorEvent.values[y] * yFactor,
                             sensorEvent.values[z] * zFactor);
