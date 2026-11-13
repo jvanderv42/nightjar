@@ -33,6 +33,10 @@ public final class GyroProfileEditor {
     // colors from the Activity theme, which can provide dark-on-dark text.
     private static final int PROFILE_TEXT_COLOR = Color.rgb(245, 247, 255);
     private static final int PROFILE_SECONDARY_TEXT_COLOR = Color.rgb(210, 216, 231);
+    private static final float PROFILE_HINT_TEXT_SP = 14f;
+    private static final float PROFILE_AXIS_LABEL_TEXT_SP = 16f;
+    private static final float PROFILE_SENSITIVITY_TEXT_SP = 18f;
+    private static final float PROFILE_RANGE_TEXT_SP = 14f;
 
     public static void open(Activity activity) {
         ArrayList<InputDevice> devices = new ArrayList<>();
@@ -165,13 +169,21 @@ public final class GyroProfileEditor {
                 "Each source axis must be used exactly once. " +
                 "Sensitivity adjusts the mapped camera yaw and pitch axes.");
         hint.setTextColor(PROFILE_SECONDARY_TEXT_COLOR);
-        column.addView(hint);
+        hint.setTextSize(PROFILE_HINT_TEXT_SP);
+        LinearLayout.LayoutParams hintParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        hintParams.bottomMargin = pad / 2;
+        column.addView(hint, hintParams);
 
         EditText name = new EditText(activity);
         name.setSingleLine(true);
         name.setHint("Profile name");
         name.setText(source == null ? "" : source.name);
-        column.addView(name);
+        name.setTextSize(18f);
+        LinearLayout.LayoutParams nameParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        nameParams.bottomMargin = pad / 2;
+        column.addView(name, nameParams);
 
         Spinner[] axes = new Spinner[3];
         CheckBox[] inverse = new CheckBox[3];
@@ -184,6 +196,8 @@ public final class GyroProfileEditor {
             TextView label = new TextView(activity);
             label.setText("Output " + names[i] + " = ");
             label.setTextColor(PROFILE_TEXT_COLOR);
+            label.setTextSize(PROFILE_AXIS_LABEL_TEXT_SP);
+            label.setTypeface(null, android.graphics.Typeface.BOLD);
             row.addView(label);
 
             Spinner axis = new Spinner(activity);
@@ -201,7 +215,10 @@ public final class GyroProfileEditor {
             invert.setChecked(source != null && source.signs[i] == -1);
             row.addView(invert);
             inverse[i] = invert;
-            column.addView(row);
+            LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            rowParams.topMargin = i == 0 ? pad / 2 : pad / 4;
+            column.addView(row, rowParams);
         }
 
         // 0.10x to 3.00x in steps of 0.05x (58 intervals), with 1.00x the default.
@@ -221,7 +238,7 @@ public final class GyroProfileEditor {
             TextView axisLabel = new TextView(activity);
             axisLabel.setText(sensitivityLabels[i]);
             axisLabel.setTextColor(PROFILE_TEXT_COLOR);
-            axisLabel.setTextSize(16);
+            axisLabel.setTextSize(PROFILE_SENSITIVITY_TEXT_SP);
             axisLabel.setTypeface(null, android.graphics.Typeface.BOLD);
             heading.addView(axisLabel, new LinearLayout.LayoutParams(
                     0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
@@ -229,7 +246,7 @@ public final class GyroProfileEditor {
             TextView valueLabel = new TextView(activity);
             valueLabel.setText(String.format(Locale.US, "%.2f×", sensitivity[i]));
             valueLabel.setTextColor(PROFILE_TEXT_COLOR);
-            valueLabel.setTextSize(16);
+            valueLabel.setTextSize(PROFILE_SENSITIVITY_TEXT_SP);
             valueLabel.setTypeface(null, android.graphics.Typeface.BOLD);
             valueLabel.setGravity(android.view.Gravity.END);
             heading.addView(valueLabel);
@@ -256,11 +273,13 @@ public final class GyroProfileEditor {
             TextView minimum = new TextView(activity);
             minimum.setText("Min 0.10×");
             minimum.setTextColor(PROFILE_SECONDARY_TEXT_COLOR);
+            minimum.setTextSize(PROFILE_RANGE_TEXT_SP);
             limits.addView(minimum, new LinearLayout.LayoutParams(
                     0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
             TextView maximum = new TextView(activity);
             maximum.setText("Max 3.00×");
             maximum.setTextColor(PROFILE_SECONDARY_TEXT_COLOR);
+            maximum.setTextSize(PROFILE_RANGE_TEXT_SP);
             maximum.setGravity(android.view.Gravity.END);
             limits.addView(maximum, new LinearLayout.LayoutParams(
                     0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
