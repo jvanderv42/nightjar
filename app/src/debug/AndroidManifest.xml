@@ -7,15 +7,12 @@
         <activity android:name="com.limelight.demo.DemoInputWorkspaceActivity" android:exported="false"
             android:windowSoftInputMode="stateAlwaysHidden|adjustResize"
             android:theme="@style/StreamTheme" />
+        <!-- Keep the controls preview available to internal debug tooling without
+             advertising a second launcher icon that can open instead of Nightjar. -->
         <activity-alias android:name="com.limelight.demo.ControlsPreview"
             android:targetActivity="com.limelight.demo.DemoInputWorkspaceActivity"
-            android:exported="true" android:label="@string/demo_controls_launcher"
-            android:icon="@mipmap/ic_launcher">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity-alias>
+            android:exported="false" android:label="@string/demo_controls_launcher"
+            android:icon="@mipmap/ic_launcher" />
         <activity android:name="com.limelight.demo.DemoPcView" android:exported="false" />
         <activity android:name="com.limelight.demo.DemoConnecting" android:exported="false" android:theme="@style/StreamTheme" />
         <activity android:name="com.limelight.demo.DemoAppView" android:exported="false" />
