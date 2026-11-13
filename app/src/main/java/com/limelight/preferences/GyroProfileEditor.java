@@ -8,6 +8,7 @@ import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.SeekBar;
 import android.widget.Spinner;
 import android.widget.ArrayAdapter;
 import android.widget.TextView;
@@ -21,6 +22,7 @@ import com.limelight.ui.NavigationDialogBuilder;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /** Settings dialogs for assigning and editing per-device gyro mapping profiles. */
 public final class GyroProfileEditor {
@@ -126,7 +128,8 @@ public final class GyroProfileEditor {
                 .setItems(new String[]{"Edit", "Duplicate", "Delete"}, (dialog, which) -> {
                     if (which == 0) editProfile(activity, profile, null);
                     else if (which == 1) editProfile(activity, new Profile(null, profile.name + " copy",
-                            profile.axes, profile.signs), null);
+                            profile.axes, profile.signs,
+                            profile.horizontalSensitivity, profile.verticalSensitivity), null);
                     else confirmDelete(activity, profile);
                 })
                 .setNegativeButton(android.R.string.cancel, null)
@@ -153,7 +156,8 @@ public final class GyroProfileEditor {
 
         TextView hint = new TextView(activity);
         hint.setText("Choose each output axis's source and whether to invert it. " +
-                "Each source axis must be used exactly once. 100% sensitivity is preserved.");
+                "Each source axis must be used exactly once. " +
+                "Sensitivity adjusts the mapped camera yaw and pitch axes.");
         column.addView(hint);
 
         EditText name = new EditText(activity);
@@ -192,6 +196,33 @@ public final class GyroProfileEditor {
             column.addView(row);
         }
 
+        // 0.10x to 3.00x in steps of 0.05x (58 intervals), with 1.00x the default.
+        float[] sensitivity = {source == null ? 1f : source.horizontalSensitivity,
+                source == null ? 1f : source.verticalSensitivity};
+        String[] sensitivityLabels = {"Horizontal sensitivity", "Vertical sensitivity"};
+        for (int i = 0; i < sensitivityLabels.length; i++) {
+            final int axisIndex = i;
+            TextView valueLabel = new TextView(activity);
+            valueLabel.setText(String.format(Locale.US, "%s: %.2f×",
+                    sensitivityLabels[i], sensitivity[i]));
+            column.addView(valueLabel);
+
+            SeekBar seekBar = new SeekBar(activity);
+            seekBar.setMax(58);
+            seekBar.setProgress(Math.round((sensitivity[i] - 0.1f) / 0.05f));
+            seekBar.setContentDescription(sensitivityLabels[i]);
+            seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+                @Override public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
+                    sensitivity[axisIndex] = (progress + 2) / 20f;
+                    valueLabel.setText(String.format(Locale.US, "%s: %.2f×",
+                            sensitivityLabels[axisIndex], sensitivity[axisIndex]));
+                }
+                @Override public void onStartTrackingTouch(SeekBar bar) {}
+                @Override public void onStopTrackingTouch(SeekBar bar) {}
+            });
+            column.addView(seekBar);
+        }
+
         ScrollView scroll = new ScrollView(activity);
         scroll.addView(column);
         AlertDialog dialog = new NavigationDialogBuilder(activity)
@@ -210,7 +241,8 @@ public final class GyroProfileEditor {
                     }
                     try {
                         Profile profile = new Profile(source == null ? null : source.id,
-                                name.getText().toString(), selectedAxes, signs);
+                                name.getText().toString(), selectedAxes, signs,
+                                sensitivity[0], sensitivity[1]);
                         GyroMappingPreferences.saveProfile(activity, profile);
                         if (assignDescriptor != null) {
                             GyroMappingPreferences.setChoice(activity, assignDescriptor,
