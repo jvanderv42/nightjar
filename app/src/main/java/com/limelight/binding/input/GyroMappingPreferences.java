@@ -35,8 +35,20 @@ public final class GyroMappingPreferences {
         public final String name;
         public final int[] axes;
         public final int[] signs;
+        public final float horizontalSensitivity;
+        public final float verticalSensitivity;
 
         public Profile(String id, String name, int[] axes, int[] signs) {
+            this(id, name, axes, signs, 1f, 1f);
+        }
+
+        public Profile(String id, String name, int[] axes, int[] signs,
+                       float horizontalSensitivity, float verticalSensitivity) {
+            if (!Float.isFinite(horizontalSensitivity) || !Float.isFinite(verticalSensitivity)
+                    || horizontalSensitivity < 0.1f || horizontalSensitivity > 3f
+                    || verticalSensitivity < 0.1f || verticalSensitivity > 3f) {
+                throw new IllegalArgumentException("Sensitivity must be between 0.10 and 3.00");
+            }
             if (name == null || name.trim().isEmpty() || axes == null || signs == null
                     || axes.length != 3 || signs.length != 3) {
                 throw new IllegalArgumentException("Name and three axes/signs are required");
@@ -53,11 +65,14 @@ public final class GyroMappingPreferences {
             this.name = name.trim();
             this.axes = axes.clone();
             this.signs = signs.clone();
+            this.horizontalSensitivity = horizontalSensitivity;
+            this.verticalSensitivity = verticalSensitivity;
         }
 
         public GyroAxisTransformer transformer() {
             return new GyroAxisTransformer(axes[0], axes[1], axes[2],
-                    signs[0], signs[1], signs[2]);
+                    signs[0], signs[1], signs[2],
+                    horizontalSensitivity, verticalSensitivity);
         }
     }
 
@@ -76,7 +91,9 @@ public final class GyroMappingPreferences {
                     JSONArray signs = p.getJSONArray("signs");
                     result.add(new Profile(p.getString("id"), p.getString("name"),
                             new int[] {axes.getInt(0), axes.getInt(1), axes.getInt(2)},
-                            new int[] {signs.getInt(0), signs.getInt(1), signs.getInt(2)}));
+                            new int[] {signs.getInt(0), signs.getInt(1), signs.getInt(2)},
+                            (float) p.optDouble("horizontalSensitivity", 1.0),
+                            (float) p.optDouble("verticalSensitivity", 1.0)));
                 } catch (JSONException | IllegalArgumentException ignored) {
                     // One damaged record must not disable all otherwise valid profiles.
                 }
@@ -96,6 +113,8 @@ public final class GyroMappingPreferences {
                 json.put("name", p.name);
                 json.put("axes", new JSONArray(p.axes));
                 json.put("signs", new JSONArray(p.signs));
+                json.put("horizontalSensitivity", p.horizontalSensitivity);
+                json.put("verticalSensitivity", p.verticalSensitivity);
                 array.put(json);
             } catch (JSONException exception) {
                 throw new IllegalStateException("Failed to serialize gyro profile", exception);
