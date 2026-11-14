@@ -268,10 +268,6 @@
             android:key="controller_test"
             android:title="@string/controller_test_title"
             android:summary="@string/controller_test_summary" />
-        <Preference
-            android:key="gyro_mapping_profiles"
-            android:title="Gyroscope Mapping"
-            android:summary="Assign an automatic or custom gyroscope profile to each connected controller" />
         <com.limelight.preferences.MaterialSwitchPreference
             android:key="checkbox_show_onscreen_controls"
             android:title="@string/title_checkbox_show_onscreen_controls"
@@ -321,6 +317,10 @@
             android:dialogMessage="@string/summary_seekbar_trigger_deadzone"
             android:text="@string/suffix_seekbar_deadzone"
             android:title="@string/title_seekbar_trigger_deadzone"/>
+        <Preference
+            android:key="gyro_mapping_profiles"
+            android:title="Gyroscope Mapping"
+            android:summary="Assign an automatic or custom gyroscope profile to each connected controller" />
         <com.limelight.preferences.MaterialSwitchPreference
             android:key="checkbox_gamepad_motion_sensors"
             android:title="@string/title_checkbox_gamepad_motion_sensors"
