@@ -1025,14 +1025,14 @@
     </PreferenceCategory>
     <PreferenceCategory android:key="category_advanced_diagnostics" android:title="@string/settings_category_diagnostics">
         <com.limelight.preferences.MaterialSwitchPreference
-            android:key="checkbox_show_gyro_diagnostics"
-            android:title="Show Gyro Diagnostics"
-            android:summary="Show controller motion readings and troubleshooting controls during streams; off by default"
-            android:defaultValue="false" />
-        <com.limelight.preferences.MaterialSwitchPreference
             android:key="checkbox_link_probe"
             android:title="@string/title_link_probe"
             android:dialogMessage="@string/summary_link_probe"
+            android:defaultValue="false" />
+        <com.limelight.preferences.MaterialSwitchPreference
+            android:key="checkbox_show_gyro_diagnostics"
+            android:title="Show Gyro Diagnostics"
+            android:summary="Show controller motion readings and troubleshooting controls during streams; off by default"
             android:defaultValue="false" />
         <!-- A PC's PyroWave frame pace (its own settings page), shown where a paired PC can measure it or has one saved. -->
         <Preference android:key="pace_calibration" android:title="@string/pace_calibration_title"
