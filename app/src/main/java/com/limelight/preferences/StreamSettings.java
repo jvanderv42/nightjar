@@ -569,7 +569,7 @@ public class StreamSettings extends NightjarActivity {
     private void layOutUnderChrome(int left, int top, int right, int bottom) {
         android.content.res.Resources res = fullSizeContext().getResources();
         float density = res.getDisplayMetrics().density;
-        GlassForm form = GlassForm.of(this);
+        GlassForm form = chrome != null ? chrome.form() : GlassForm.of(this);
         ((NightSkyView) findViewById(R.id.settings_sky)).setSafeTop(top);
         View frame = findViewById(R.id.settings_frame);
         if (form == GlassForm.PHONE) {
@@ -603,9 +603,21 @@ public class StreamSettings extends NightjarActivity {
     private void applyListFoot(ListView list) {
         if (list == null) return;
         // A handheld's rail ends on the screen's edge: nothing floats under it, and every row can fit.
-        boolean handheldRail = list == listOf(R.id.settings_sections) && GlassForm.of(this) == GlassForm.HANDHELD;
-        int foot = handheldRail ? getResources().getDimensionPixelSize(R.dimen.space_xs) : listFoot;
+        GlassForm form = chrome != null ? chrome.form() : GlassForm.of(this);
+        boolean handheldRail = list == listOf(R.id.settings_sections) && form == GlassForm.HANDHELD;
+        boolean pane = twoPane && list == listOf(R.id.stream_settings);
+        int foot = handheldRail ? getResources().getDimensionPixelSize(R.dimen.space_xs) : contentFoot(pane, form);
         list.setPadding(list.getPaddingLeft(), list.getPaddingTop(), list.getPaddingRight(), foot);
+    }
+
+    /**
+     * What a list keeps under its last row. The right pane beside the rail ends on the screen's edge too: a ListView
+     * fills its padding while scrolling down (it does not clip to it) but drops the rows there on the way up, so a deep
+     * foot showed a row going down and a blank band, with the group's card cut, coming back up.
+     */
+    private int contentFoot(boolean rightPane, GlassForm form) {
+        if (rightPane && form != GlassForm.PHONE) return getResources().getDimensionPixelSize(R.dimen.space_xs);
+        return listFoot;
     }
 
     /**
@@ -1256,7 +1268,9 @@ public class StreamSettings extends NightjarActivity {
         list.setDividerHeight(0);
         list.setSelector(R.drawable.settings_row_focus);
         // The selector's inset puts rows on their group's edge; under the last one, what the chrome keeps.
-        int foot = ((StreamSettings) activity).listFoot;
+        StreamSettings settings = (StreamSettings) activity;
+        GlassForm form = settings.chrome != null ? settings.chrome.form() : GlassForm.of(activity);
+        int foot = settings.listFoot > 0 ? settings.contentFoot(contentPane && settings.twoPane, form) : 0;
         list.setPadding(0, 0, 0, foot > 0 ? foot : view.getResources().getDimensionPixelSize(R.dimen.grid_padding_bottom));
         list.setClipToPadding(false);
     }
@@ -1531,7 +1545,12 @@ public class StreamSettings extends NightjarActivity {
         private final Map<String, CharSequence> descriptions = new HashMap<>();
         private int codecSummaryGeneration;
         private final SharedPreferences.OnSharedPreferenceChangeListener summaryUpdater =
-                (prefs, key) -> refreshState();
+                (prefs, key) -> {
+                    refreshState();
+                    if (PreferenceConfiguration.USB_FORWARDING_PREF_STRING.equals(key)) {
+                        com.limelight.binding.usb.UsbForwarding.syncPersistentPermission(getActivity());
+                    }
+                };
 
         /** Values and summaries follow the stored settings; so do the settings that apply only given the others. */
         private void refreshState() {
@@ -1625,8 +1644,8 @@ public class StreamSettings extends NightjarActivity {
 
         /**
          * A setting that does nothing for the current choices is hidden, not greyed, and keeps its value: frame
-         * pacing while adaptive refresh or host frame times replace it, Real VRR without adaptive refresh and the
-         * fixed refresh's host frame times with it, the frame-drop choice without Balanced
+         * pacing while adaptive refresh or host frame times replace it, the fixed refresh's host frame times with
+         * adaptive refresh (its On does the same), the frame-drop choice without Balanced
          * pacing, the sharpness without an upscaler that sharpens, the two minimums while automatic quality is
          * off, a switch's own rows while it is off (SettingRules), and the new streaming engine's rows with the
          * classic one. Hidden settings leave search and their section's More count, and come back in their place.
@@ -1637,9 +1656,8 @@ public class StreamSettings extends NightjarActivity {
             setShown(SHARP_COLOR_KEY, SettingRules.sharpColorApplies(prefs));
             setShown("checkbox_enable_sdr_10bit", SettingRules.sdr10Applies(prefs));
             setShown(SettingRules.FRAME_PACING, SettingRules.framePacingApplies(context, prefs));
-            boolean realVrr = SettingRules.realVrrApplies(context, prefs);
-            setShown(SettingRules.REAL_VRR, realVrr);
-            setShown(SettingRules.HOST_FRAME_TIMES, !realVrr);
+            // With adaptive refresh the Variable refresh rate row's On shows frames at the PC's frame times.
+            setShown(SettingRules.HOST_FRAME_TIMES, !SettingRules.vrrOn(context, prefs));
             setShown("checkbox_reduce_refresh_rate", SettingRules.reduceRefreshRateApplies(context, prefs));
             setShown("checkbox_content_rate_frame_rate", SettingRules.contentRateApplies(context, prefs));
             setShown("checkbox_display_queue_recovery", SettingRules.displayQueueRecoveryApplies(context, prefs));
@@ -2900,7 +2918,7 @@ public class StreamSettings extends NightjarActivity {
             // Adaptive refresh only where a screen has ARR (Android 16): elsewhere it can't be turned on,
             // and a choice saved before reads as off (PreferenceConfiguration and SettingRules do the same).
             // The row shows off without saving that, so the choice returns if Android later adds ARR.
-            SwitchPreference vrr = (SwitchPreference) findPreference(PreferenceConfiguration.VRR_PREF_STRING);
+            Preference vrr = findPreference(PreferenceConfiguration.VRR_PREF_STRING);
             if (vrr != null && !DisplayFrameRatePolicy.vrrOffered(getActivity())) {
                 LimeLog.info("Hiding adaptive refresh: no screen has ARR");
                 vrr.setPersistent(false);

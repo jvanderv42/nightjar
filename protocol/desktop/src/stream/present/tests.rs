@@ -453,9 +453,113 @@ fn the_vrr_sync_switch_sets_the_sync_interval_of_tearing_modes_only() {
         assert_eq!(sync_interval(PacingMode::BeamRace, sync), 0, "slices need tearing");
     }
     assert_eq!(sync_interval(PacingMode::Immediate, VrrSync::Off), 0);
+    assert_eq!(sync_interval(PacingMode::HostTimes, VrrSync::Off), i32::from(cfg!(target_os = "macos")), "Real VRR tears, except on macOS");
     assert_eq!(sync_interval(PacingMode::Immediate, VrrSync::Present1), 1);
     assert_eq!(sync_interval(PacingMode::HostTimes, VrrSync::Present1), 1);
     assert_eq!(sync_interval(PacingMode::Immediate, VrrSync::Scan), 0, "waits on this thread, then tears");
+}
+
+#[test]
+fn tear_free_vrr_waits_out_the_scan_on_windows_unless_the_switch_says_otherwise() {
+    assert_eq!(VrrSync::choose(None, true, true), VrrSync::Scan);
+    assert_eq!(VrrSync::choose(Some(" "), true, true), VrrSync::Scan, "an empty switch is no switch");
+    assert_eq!(VrrSync::choose(None, false, true), VrrSync::Off, "the setting turned off");
+    assert_eq!(VrrSync::choose(None, true, false), VrrSync::Off, "no scan line to read off Windows");
+    assert_eq!(VrrSync::choose(Some("off"), true, true), VrrSync::Off, "the switch shows every frame at once");
+    assert_eq!(VrrSync::choose(Some("blank"), true, true), VrrSync::Blank);
+    assert_eq!(VrrSync::choose(Some("scan"), false, false), VrrSync::Scan, "the switch is taken as given");
+    assert_eq!(VrrSync::choose(Some("present1"), false, true), VrrSync::Present1);
+}
+
+#[test]
+fn the_blank_vrr_sync_parses_labels_and_leaves_the_interval_to_each_present() {
+    assert_eq!(VrrSync::parse(Some("blank")), VrrSync::Blank);
+    assert_eq!(VrrSync::Blank.label(), "blank");
+    for sync in [VrrSync::Off, VrrSync::Present1, VrrSync::Scan, VrrSync::Blank] {
+        assert_eq!(VrrSync::parse(Some(sync.label())), sync, "the label parses back");
+    }
+    assert_eq!(sync_interval(PacingMode::Immediate, VrrSync::Blank), 0, "the choice is made per present");
+    assert_eq!(sync_interval(PacingMode::Vsync, VrrSync::Blank), 1);
+}
+
+#[test]
+fn planned_latch_follows_the_display_period_headroom_and_the_floor_gap() {
+    assert!(!planned_latch(None, 4167), "no flip before: nothing to latch against");
+    assert!(planned_latch(Some(4000), 4167), "inside one display period");
+    assert!(!planned_latch(Some(4500), 4167), "past one period plus 225 us and below the floor gap");
+    assert!(!planned_latch(Some(19_999), 4167));
+    assert!(planned_latch(Some(20_000), 4167), "the floor gap latches after a long gap");
+}
+
+// Upstream cases of `D3D11PresentPolicy::latch`, tests/vrr/tst_dxgipresent.cpp (commit 19758e5e6).
+#[test]
+fn latch_matches_the_upstream_protection_cases() {
+    use std::cell::Cell;
+    let fresh_blank = FlipObservation { predecessor_known: true, statistics_valid: true, pending: false, raster_valid: true, in_vertical_blank: true, raster_query_start_us: 1000, raster_query_end_us: 1050 };
+    // Runs `latch` on one observation and clock, checking the query count the upstream test checks.
+    let protect = |observation: FlipObservation, now_us: u64, window_us: u64| -> bool {
+        let queries = Cell::new(0);
+        let latched = latch(false, window_us, || { queries.set(queries.get() + 1); observation }, || now_us);
+        assert_eq!(queries.get(), usize::from(window_us != 0), "enabled protection makes one observation");
+        latched
+    };
+    assert!(!protect(fresh_blank, 1100, 8333), "a fresh blank with a known retired predecessor may retain adaptive presentation");
+    let mut observation = fresh_blank;
+    observation.predecessor_known = false;
+    assert!(protect(observation, 1100, 8333), "startup or a missing predecessor ID must not permit an unsafe tearing flip");
+    observation = fresh_blank;
+    observation.pending = true;
+    assert!(protect(observation, 1100, 8333), "a pending predecessor must remain protected even when the raster reports blank");
+    observation.in_vertical_blank = false;
+    assert!(protect(observation, 1100, 8333), "pending work during active scanout must remain protected");
+    observation.pending = false;
+    assert!(protect(observation, 1100, 8333), "an accounted-for predecessor can still be actively scanning out");
+    observation = fresh_blank;
+    observation.statistics_valid = false;
+    assert!(protect(observation, 1100, 8333), "invalid or disjoint statistics must not become proof of a safe blank");
+    observation = fresh_blank;
+    observation.in_vertical_blank = false;
+    assert!(protect(observation, 1100, 8333), "active scanout must stay protected before a subsequent query failure");
+    observation.raster_valid = false;
+    observation.in_vertical_blank = true;
+    assert!(protect(observation, 1100, 8333), "a raster failure after active scanout must not reuse a blank flag");
+    for _ in 0..8 {
+        assert!(protect(observation, 1100, 8333), "repeated raster failures must never disable flip protection");
+    }
+    observation.statistics_valid = false;
+    assert!(protect(observation, 1100, 8333), "missing both timing sources must select synchronized fallback");
+    observation = fresh_blank;
+    observation.raster_query_start_us = 0;
+    assert!(protect(observation, 1100, 8333), "a blank without an observation timestamp must remain protected");
+    observation = fresh_blank;
+    observation.raster_query_end_us = 999;
+    assert!(protect(observation, 1100, 8333), "a reversed query clock must not authorize tearing");
+    assert!(protect(fresh_blank, 1049, 8333), "a future raster observation must not authorize tearing");
+    assert!(!protect(fresh_blank, 1250, 8333), "the 250 us total-age limit must include its exact boundary");
+    assert!(protect(fresh_blank, 1251, 8333), "an observation older than the 250 us cap must remain protected");
+    observation = fresh_blank;
+    observation.raster_query_end_us = 1251;
+    assert!(protect(observation, 1251, 8333), "a slow raster query must not produce usable phase evidence");
+    observation.raster_query_end_us = 1160;
+    assert!(protect(observation, 1260, 8333), "query duration and preemption after the query must share one total-age budget");
+    assert!(protect(fresh_blank, 2000, 8333), "a stale blank after preemption must not authorize tearing");
+    assert!(!protect(fresh_blank, 1100, 1600), "the period-relative freshness limit must include its exact boundary");
+    assert!(protect(fresh_blank, 1101, 1600), "a short display period must tighten freshness below the 250 us cap");
+    assert!(protect(fresh_blank, 1050, 15), "a nonzero protection window with no precision budget must fail closed");
+    assert!(!protect(FlipObservation::default(), 1100, 0), "zero must remain an explicit opt-out of native flip protection");
+}
+
+#[test]
+fn latch_skips_the_observation_when_planned_or_disabled() {
+    use std::cell::Cell;
+    let fresh_blank = FlipObservation { predecessor_known: true, statistics_valid: true, pending: false, raster_valid: true, in_vertical_blank: true, raster_query_start_us: 1000, raster_query_end_us: 1050 };
+    let queries = Cell::new(0);
+    let clocks = Cell::new(0);
+    let planned = latch(true, 8333, || { queries.set(queries.get() + 1); FlipObservation::default() }, || { clocks.set(clocks.get() + 1); 1100 });
+    assert!(planned && queries.get() == 0 && clocks.get() == 0, "a planned latch bypasses the observation and the clock");
+    let disabled = latch(false, 0, || { queries.set(queries.get() + 1); FlipObservation::default() }, || { clocks.set(clocks.get() + 1); 1100 });
+    assert!(!disabled && queries.get() == 0 && clocks.get() == 0, "a disabled guard bypasses the observation and the clock");
+    assert!(!latch(false, 8333, || fresh_blank, || 1100), "a fresh blank with valid statistics does not latch");
 }
 
 #[test]
@@ -488,13 +592,13 @@ fn a_vrr_streams_pacing_follows_the_display_check_once_and_sets_the_interval_onc
     assert_eq!(vrr.step(&mut mode, Some(&fixed), 0), Some(1), "V-Sync waits for the refresh");
     assert_eq!((mode, vrr.fell_back), (PacingMode::Vsync, true));
     assert_eq!(vrr.step(&mut mode, Some(&fixed), 0), None, "given once");
-    // V-Sync off in the settings: immediate stays, with nothing for the renderer.
+    // V-Sync off in the settings: immediate stays, with nothing for the renderer where Real VRR tears.
     let no_vsync = crate::config::Settings { vsync: false, present_at_host_times: true, ..Default::default() };
     let (start, _) = pacing(&no_vsync, true);
     assert_eq!(start, PacingMode::HostTimes);
     let mut vrr = VrrPacing::new(true, without_vrr(&no_vsync), VrrSync::Off, start);
     let mut mode = start;
-    assert_eq!(vrr.step(&mut mode, Some(&fixed), 0), None);
+    assert_eq!(vrr.step(&mut mode, Some(&fixed), 0), interval_change(PacingMode::HostTimes, PacingMode::Immediate));
     assert_eq!((mode, vrr.fell_back), (PacingMode::Immediate, true));
     // NIGHTJAR_VRR_CHECK=0: the verdict is not applied; present1 still sets interval 1.
     let mut vrr = VrrPacing::new(false, PacingMode::Vsync, VrrSync::Present1, PacingMode::Immediate);
@@ -568,8 +672,15 @@ fn a_v_sync_fall_back_is_rechecked_and_returns_once_the_display_refreshes_on_pre
     }
     assert_eq!(vrr.step(&mut mode, Some(&idles), at), None);
     assert_eq!(mode, PacingMode::Vsync);
-    assert_eq!(vrr.step(&mut mode, Some(&on), at), Some(0));
+    assert_eq!(vrr.step(&mut mode, Some(&on), at), interval_change(PacingMode::Vsync, PacingMode::HostTimes));
     assert_eq!(mode, PacingMode::HostTimes, "the pacing it had before");
+}
+
+/// The interval `VrrPacing::step` reports when the pacing changes: none where both pacings
+/// present alike, as Real VRR and V-Sync do on macOS.
+fn interval_change(from: PacingMode, to: PacingMode) -> Option<i32> {
+    let (before, after) = (sync_interval(from, VrrSync::Off), sync_interval(to, VrrSync::Off));
+    (before != after).then_some(after)
 }
 
 #[test]
@@ -588,12 +699,12 @@ fn a_linux_vrr_stream_on_a_display_without_vrr_waits_for_the_refresh() {
         let mut vrr = VrrPacing::new(true, without_vrr(&settings), VrrSync::Off, start);
         let mut mode = start;
         assert_eq!(vrr.step(&mut mode, Some(&verdict(true, None)), 0), None, "still reading: the pacing stays");
-        assert_eq!(vrr.step(&mut mode, Some(&verdict(true, Some(&off))), 0), Some(1), "V-Sync waits for the refresh");
+        assert_eq!(vrr.step(&mut mode, Some(&verdict(true, Some(&off))), 0), interval_change(start, PacingMode::Vsync), "V-Sync waits for the refresh");
         assert_eq!((mode, vrr.fell_back), (PacingMode::Vsync, true));
         // A recheck that reads VRR on (the user turned it on) returns to the pacing it had.
         let tears = vrr.probe_tears(mode);
         assert!(tears, "rechecked with the pacing it had");
-        assert_eq!(vrr.step(&mut mode, Some(&verdict(tears, Some(&on))), 0), Some(0));
+        assert_eq!(vrr.step(&mut mode, Some(&verdict(tears, Some(&on))), 0), interval_change(PacingMode::Vsync, start));
         assert_eq!(mode, start);
     }
     // Where VRR runs (KDE adaptive sync, GNOME VRR, gamescope) nothing changes.
@@ -1246,12 +1357,12 @@ fn a_present_without_waiting_is_refused_while_the_last_picture_waits() {
     }
 }
 
-// Real VRR waits at most 2 ms past the typical frame for a late one: on Wi-Fi the unbounded
-// percentile rule held every frame for the lateness tail (ADAPTIVE_SPREAD_US).
+// Real VRR's delay follows the link and stays within a ceiling above the typical frame: on Wi-Fi
+// the unbounded percentile rule held every frame for the lateness tail (ADAPTIVE_SPREAD_US).
 #[test]
 fn host_times_bound_the_wait_for_late_frames() {
     let pacer = Pacer::new(PacingMode::HostTimes, 6_944);
-    assert_eq!(pacer.clock.settings.max_spread_us, Some(2_000));
+    assert_eq!(pacer.clock.settings.max_spread_us, Some(rubylight_protocol::present_clock::ADAPTIVE_SPREAD_US));
     assert_eq!(pacer.clock.settings.min_interval_us, 6_944);
     assert_eq!(pacer.clock.settings.max_hold_us, ClockSettings::default().max_hold_us, "the backlog bound is unchanged");
 }

@@ -338,17 +338,28 @@ public final class ActionSheet extends BottomSheetDialog {
 
     @Override
     public void show() {
+        // A stream that is finishing refuses a new window: the panel and its blur must not be created over it.
+        android.app.Activity owner = getOwnerActivity();
+        if (owner != null && (owner.isFinishing() || owner.isDestroyed())) {
+            return;
+        }
         // Shown first, so it stands under the panel: it blurs the stream, not the menu.
         // A panel over a page samples nothing live: its surface stays the near-opaque one, over the page's dim.
-        if (panel && anchor == null && blur == null && !isShowing() && getOwnerActivity() != null) {
+        if (panel && anchor == null && blur == null && !isShowing() && owner != null) {
             int radius = Math.round(GlassSpec.menuWindow(getContext()).blur);
-            blur = MenuBlurWindow.openIfAllowed(getOwnerActivity(), radius, on -> menuGlass.setOverBlur(on));
+            blur = MenuBlurWindow.openIfAllowed(owner, radius, on -> menuGlass.setOverBlur(on));
             menuGlass.setOverBlur(blur != null);
             if (blur != null) {
                 body.addOnLayoutChangeListener((view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> placeBlur());
             }
         }
-        super.show();
+        try {
+            super.show();
+        } catch (RuntimeException e) {
+            // A window this stream no longer takes must not leave its blur behind on its own.
+            closeBlur();
+            throw e;
+        }
     }
 
     private void blurPage() {
@@ -473,8 +484,9 @@ public final class ActionSheet extends BottomSheetDialog {
         button.setIconPadding(spacing / 2);
         button.setMinHeight(compactTile());
         // The icon sits above the label, so the label can use nearly the whole width of its share.
-        if (compact) button.setPaddingRelative(spacing, spacing / 2, spacing, spacing / 2);
-        else button.setPaddingRelative(spacing, button.getPaddingTop(), spacing, button.getPaddingBottom());
+        // A full step above the icon: half a step, or the button's own few pixels, left it against the tile's top edge.
+        if (compact) button.setPaddingRelative(spacing, spacing, spacing, spacing / 2);
+        else button.setPaddingRelative(spacing, Math.max(spacing, button.getPaddingTop()), spacing, button.getPaddingBottom());
         int[][] states = {new int[] {android.R.attr.state_checked}, new int[] {}};
         android.content.res.ColorStateList foreground = new android.content.res.ColorStateList(states, new int[] {
                 MaterialColors.getColor(context, com.google.android.material.R.attr.colorOnPrimaryContainer, 0),
@@ -1303,14 +1315,20 @@ public final class ActionSheet extends BottomSheetDialog {
         this.onClosed = onClosed;
     }
 
+    /** Removes the blur under the panel, if this sheet opened one, and returns the glass to its opaque surface. */
+    private void closeBlur() {
+        if (blur == null) return;
+        MenuBlurWindow open = blur;
+        blur = null;
+        open.close();
+        if (menuGlass != null) menuGlass.setOverBlur(false);
+    }
+
     @Override
     protected void onStop() {
         super.onStop();
         // Removed, not hidden: a stream with the menu closed carries nothing of it.
-        if (blur != null) {
-            blur.close();
-            blur = null;
-        }
+        closeBlur();
         if (onClosed != null) onClosed.run();
     }
 

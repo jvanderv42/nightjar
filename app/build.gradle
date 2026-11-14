@@ -75,8 +75,8 @@ android {
         minSdk 21
         targetSdk 36
 
-        versionName "5.2.0"
-        versionCode = 391
+        versionName "5.4.1"
+        versionCode = 394
 
         resValue "string", "app_name", brandName
         buildConfigField "String", "BRAND_NAME", "\"${brandName}\""
@@ -224,6 +224,9 @@ android {
             // changing this signing identity later would require uninstalling and lose app data.
             initWith release
             applicationIdSuffix ".custom"
+            // The upstream in-app updater offers official-signed APKs, which cannot
+            // update this separately signed package. Distribute updates via this fork.
+            buildConfigField "boolean", "GITHUB_UPDATES", "false"
             matchingFallbacks = ['release']
             resValue "string", "app_label", brandName
             resValue "string", "app_label_root", "${brandName} (Root)"

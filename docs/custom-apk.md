@@ -4,7 +4,7 @@ The dedicated GitHub Actions workflow produces an optimized, non-debuggable Andr
 
 - **Package ID:** `com.butterpollo.client.custom`
 - **Launcher name:** Nightjar (no Debug suffix)
-- **Build:** R8-minified, arm64-only, based on Nightjar 5.2.0
+- **Build:** R8-minified, arm64-only, based on the current upstream version integrated into this fork
 - **Installation:** alongside the official `com.butterpollo.client` without changing its settings
 
 ## One-time setup entirely through GitHub
@@ -13,7 +13,7 @@ The dedicated GitHub Actions workflow produces an optimized, non-debuggable Andr
 2. Add a **repository secret** named `CUSTOM_NIGHTJAR_SIGNING_PASSWORD`, containing a unique, randomly generated password of at least **24 characters**. Keep an independent secure copy in a password manager. Never put this value in a workflow input, commit, issue, Actions log or chat.
 3. After the workflow has been merged into `main`, go to **Actions → Nightjar custom APK → Run workflow** and select `main`.
 
-The first run creates a persistent 3072-bit RSA signing key in a PKCS#12 keystore inside the Actions runner. The keystore is doubly encrypted: PKCS#12 password protection and AES-256-CBC with PBKDF2 (600,000 iterations). The encrypted archive, **not** the password or plaintext keystore, is stored in a dedicated repository branch `custom-signing-key` containing only `nightjar-custom.p12.enc`. Subsequent runs decrypt that same key using the GitHub secret and can update the custom Nightjar installation in place.
+The first run creates a persistent 3072-bit RSA signing key in a PKCS#12 keystore inside the Actions runner. The keystore is doubly encrypted: PKCS#12 password protection and AES-256-CBC with PBKDF2 (600,000 iterations). The encrypted archive, **not** the password or plaintext keystore, is stored in a dedicated repository branch `custom-signing-key` containing only `nightjar-custom.p12.enc`. Subsequent runs decrypt that same key using the GitHub secret and can update the custom Nightjar installation in place. The custom app deliberately disables the upstream in-app updater; users install new APKs from this fork's [Releases page](https://github.com/jvanderv42/nightjar/releases).
 
 **Security tradeoff:** The encrypted keystore is stored in this repository and may be publicly downloadable when the repository is public. Its security depends on your secret's strength and continued confidentiality. Back up both the encrypted branch and the password securely outside GitHub. Deleting or losing either makes future settings-preserving custom APK updates impossible. Anyone with both the branch contents and the secret password could sign malicious updates; restrict secret access and workflow modification accordingly.
 
@@ -22,7 +22,7 @@ Do not delete `custom-signing-key` or rotate the password without re-encrypting 
 ## APK installation
 
 When the workflow passes, download its `nightjar-custom-arm64` Actions artifact and extract
-`nightjar-5.2.0-custom-arm64.apk`. Installing it creates a **second Nightjar**, independent of the official app. You will need to configure and pair the new app once. Future builds that retain the package name and this signing key can update it without losing its settings, provided their version codes are compatible.
+the versioned `nightjar-<version>-custom-arm64.apk`. Installing it creates a **second Nightjar**, independent of the official app. You will need to configure and pair the new app once. Future builds that retain the package name and this signing key can update it without losing its settings, provided their version codes are compatible.
 
 The official Nightjar 4.12.4 installation is not modified by installing this custom APK.
 
