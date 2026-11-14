@@ -1,0 +1,102 @@
+name: Nightjar custom APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write # First run creates a dedicated encrypted signing-key branch.
+
+concurrency:
+  group: nightjar-custom-signing
+  cancel-in-progress: false
+
+jobs:
+  custom-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: recursive
+          persist-credentials: true
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          workspaces: 'protocol -> target'
+      - name: Install Android Rust targets
+        run: rustup target add aarch64-linux-android
+      - name: Restore or create persistent custom signing key
+        shell: bash
+        env:
+          CUSTOM_NIGHTJAR_SIGNING_PASSWORD: ${{ secrets.CUSTOM_NIGHTJAR_SIGNING_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ "${#CUSTOM_NIGHTJAR_SIGNING_PASSWORD}" -lt 24 ]; then
+            echo "::error::Set CUSTOM_NIGHTJAR_SIGNING_PASSWORD to a strong, unique password of at least 24 characters in repository Actions secrets."
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/signing"
+          chmod 700 "$RUNNER_TEMP/signing"
+          keystore="$RUNNER_TEMP/signing/nightjar-custom.p12"
+          if git ls-remote --exit-code origin refs/heads/custom-signing-key >/dev/null 2>&1; then
+            git fetch --no-tags origin refs/heads/custom-signing-key
+            git show FETCH_HEAD:nightjar-custom.p12.enc > "$RUNNER_TEMP/signing/nightjar-custom.p12.enc"
+            openssl enc -aes-256-cbc -d -pbkdf2 -iter 600000 \
+              -in "$RUNNER_TEMP/signing/nightjar-custom.p12.enc" -out "$keystore" \
+              -pass env:CUSTOM_NIGHTJAR_SIGNING_PASSWORD
+          else
+            keytool -genkeypair -storetype PKCS12 -keystore "$keystore" \
+              -alias nightjarCustom -keyalg RSA -keysize 3072 -validity 10000 \
+              -dname 'CN=Nightjar Custom' \
+              -storepass "$CUSTOM_NIGHTJAR_SIGNING_PASSWORD" \
+              -keypass "$CUSTOM_NIGHTJAR_SIGNING_PASSWORD"
+            openssl enc -aes-256-cbc -salt -pbkdf2 -iter 600000 \
+              -in "$keystore" -out "$RUNNER_TEMP/signing/nightjar-custom.p12.enc" \
+              -pass env:CUSTOM_NIGHTJAR_SIGNING_PASSWORD
+            # A root commit stores only encrypted keystore bytes, never the signing password.
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            blob=$(git hash-object -w "$RUNNER_TEMP/signing/nightjar-custom.p12.enc")
+            tree=$(printf '100644 blob %s\tnightjar-custom.p12.enc\n' "$blob" | git mktree)
+            commit=$(printf '%s\n' 'Store encrypted Nightjar custom signing keystore' | git commit-tree "$tree")
+            git push origin "$commit:refs/heads/custom-signing-key"
+            echo "Created encrypted persistent signing key on custom-signing-key."
+          fi
+          # Store the keystore fingerprint for each build without exposing private data.
+          keytool -list -keystore "$keystore" -storepass "$CUSTOM_NIGHTJAR_SIGNING_PASSWORD" \
+            -alias nightjarCustom -v | grep 'SHA256:'
+      - name: Build signed arm64 custom Nightjar
+        shell: bash
+        env:
+          BP_KEYSTORE: ${{ runner.temp }}/signing/nightjar-custom.p12
+          BP_KEYSTORE_PASSWORD: ${{ secrets.CUSTOM_NIGHTJAR_SIGNING_PASSWORD }}
+          BP_KEY_ALIAS: nightjarCustom
+          BP_KEY_PASSWORD: ${{ secrets.CUSTOM_NIGHTJAR_SIGNING_PASSWORD }}
+        run: |
+          set -euo pipefail
+          bash gradlew --no-daemon --max-workers=4 -PabiFilters=arm64-v8a :app:assembleNonRootCustom
+          apk="app/build/outputs/apk/nonRoot/custom/app-nonRoot-custom.apk"
+          test -s "$apk"
+          info=$("$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$apk" | grep -m 1 '^package:')
+          echo "$info"
+          [[ "$info" == *"name='com.butterpollo.client.custom'"* ]] || {
+            echo "::error::Custom APK package ID does not match."
+            exit 1
+          }
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$apk" |
+            grep 'Signer #1 certificate SHA-256 digest:'
+          mkdir -p output
+          cp "$apk" output/nightjar-5.2.0-custom-arm64.apk
+      - name: Remove signing key
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/signing"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: nightjar-custom-arm64
+          path: output/nightjar-5.2.0-custom-arm64.apk
+          if-no-files-found: error
+          retention-days: 30

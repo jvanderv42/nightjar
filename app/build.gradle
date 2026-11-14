@@ -219,6 +219,16 @@ android {
             signingConfig signingConfigs.release
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
+        custom {
+            // A separate, production-style Nightjar. Use a persistent custom release key:
+            // changing this signing identity later would require uninstalling and lose app data.
+            initWith release
+            applicationIdSuffix ".custom"
+            matchingFallbacks = ['release']
+            resValue "string", "app_label", brandName
+            resValue "string", "app_label_root", "${brandName} (Root)"
+            signingConfig signingConfigs.release
+        }
     }
 
     externalNativeBuild {
@@ -338,7 +348,7 @@ def prepareNativePatches = tasks.register('prepareNativePatches', PrepareNativeP
 }
 
 tasks.configureEach { task ->
-    if (task.name ==~ /pre.*ReleaseBuild/) {
+    if (task.name ==~ /pre.*(Release|Custom)Build/) {
         task.dependsOn verifyReleaseSigning
     }
     if (task.name == 'preBuild' || task.name.startsWith('configureNdkBuild') || task.name.startsWith('buildNdkBuild')) {
