@@ -4,7 +4,7 @@ The dedicated GitHub Actions workflow produces an optimized, non-debuggable Andr
 
 - **Package ID:** `com.butterpollo.client.custom`
 - **Launcher name:** Nightjar (no Debug suffix)
-- **Build:** R8-minified, arm64-only, based on Nightjar 5.2.0
+- **Build:** R8-minified, arm64-only, based on the current upstream version integrated into this fork
 - **Installation:** alongside the official `com.butterpollo.client` without changing its settings
 
 ## One-time setup entirely through GitHub
@@ -22,7 +22,7 @@ Do not delete `custom-signing-key` or rotate the password without re-encrypting 
 ## APK installation
 
 When the workflow passes, download its `nightjar-custom-arm64` Actions artifact and extract
-`nightjar-5.2.0-custom-arm64.apk`. Installing it creates a **second Nightjar**, independent of the official app. You will need to configure and pair the new app once. Future builds that retain the package name and this signing key can update it without losing its settings, provided their version codes are compatible.
+the versioned `nightjar-<version>-custom-arm64.apk`. Installing it creates a **second Nightjar**, independent of the official app. You will need to configure and pair the new app once. Future builds that retain the package name and this signing key can update it without losing its settings, provided their version codes are compatible.
 
 The official Nightjar 4.12.4 installation is not modified by installing this custom APK.
 
