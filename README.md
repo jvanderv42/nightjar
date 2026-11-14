@@ -113,7 +113,7 @@ com.butterpollo.client.custom
 
 That means you can keep the original Nightjar installed, complete with its settings and paired PCs, while trying this version. The custom app maintains its **own** settings, pairing identity and controller profiles; you will pair and configure it once. Future versions of this custom fork can update it in place when they retain the same application ID, signing certificate and a compatible version code.
 
-The custom build is **non-debuggable** and uses the visible app name **Nightjar** (without “Debug”). It is signed with the fork's own signing certificate, **not** the original Nightjar release certificate. It cannot be installed over the official application.
+The custom build uses the visible app name **Nightjar**. It is signed with the fork's own signing certificate, **not** the original Nightjar release certificate. It cannot be installed over the official application.
 
 ## Download
 
