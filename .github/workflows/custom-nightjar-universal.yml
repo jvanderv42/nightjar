@@ -73,8 +73,13 @@ jobs:
             echo '::error::Incorrect package ID'
             exit 1
           }
-          [[ "$info" == *"versionCode='391'"* ]] || {
-            echo '::error::Unexpected version code'
+          versionCode=$(sed -n 's/^ *versionCode = \([0-9]*\)$/\1/p' app/build.gradle | head -n 1)
+          if [ -z "$versionCode" ]; then
+            echo '::error::Could not read app versionCode'
+            exit 1
+          fi
+          [[ "$info" == *"versionCode='$versionCode'"* ]] || {
+            echo "::error::Unexpected APK version code (expected $versionCode)"
             exit 1
           }
           for abi in arm64-v8a armeabi-v7a x86 x86_64; do
@@ -87,8 +92,8 @@ jobs:
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$apk" |
             grep 'Signer #1 certificate SHA-256 digest:'
           mkdir -p dist
-          cp "$apk" dist/nightjar-5.2.0-custom-universal.apk
-          (cd dist && sha256sum nightjar-5.2.0-custom-universal.apk > SHA256SUMS.txt)
+          cp "$apk" dist/nightjar-custom-universal.apk
+          (cd dist && sha256sum nightjar-custom-universal.apk > SHA256SUMS.txt)
           cat dist/SHA256SUMS.txt
       - name: Remove private signing material
         if: always()
@@ -97,7 +102,7 @@ jobs:
         with:
           name: nightjar-custom-universal
           path: |
-            dist/nightjar-5.2.0-custom-universal.apk
+            dist/nightjar-custom-universal.apk
             dist/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
@@ -107,15 +112,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tag="custom-5.2.0-1"
+          version=$(sed -n 's/^ *versionName "\(.*\)"$/\1/p' app/build.gradle | head -n 1)
+          if [ -z "$version" ]; then
+            echo '::error::Could not read app versionName'
+            exit 1
+          fi
+          tag="custom-${version}-1"
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "::error::Release $tag already exists. Refusing to overwrite a publicly published APK."
             exit 1
           fi
           cat > "$RUNNER_TEMP/release-notes.md" <<'NOTES'
-          ## Nightjar Custom 5.2.0 — Universal Android APK
+          ## Nightjar Custom — Universal Android APK
 
-          Unofficial, community-built Nightjar 5.2.0 based on the open-source
+          Unofficial, community-built Nightjar based on the open-source
           Nightjar project by RamazanKara, with custom controller gyro work.
 
           - Flydigi Apex 4 and Vader 4 Pro gyro profiles and manual selection
@@ -140,9 +150,9 @@ jobs:
           Original project: https://github.com/RamazanKara/nightjar
           NOTES
           gh release create "$tag" \
-            dist/nightjar-5.2.0-custom-universal.apk dist/SHA256SUMS.txt \
+            dist/nightjar-custom-universal.apk dist/SHA256SUMS.txt \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --title 'Nightjar Custom 5.2.0 (Universal Android)' \
+            --title "Nightjar Custom ${version} (Universal Android)" \
             --notes-file "$RUNNER_TEMP/release-notes.md" \
-            --latest=false
+            --latest
