@@ -294,6 +294,7 @@ Tier: Main rows show when a section opens; More rows fold behind the section's l
 
 | Setting / preference key | Tier | Default | Choices and units | When to change or use |
 | --- | --- | --- | --- | --- |
+| Show Gyro Diagnostics<br>`checkbox_show_gyro_diagnostics` | More | Off | On; Off | Off by default. Shows controller motion values and troubleshooting controls while streaming. Enable only when investigating gyroscope behavior; recording and CSV sharing are available from the overlay. |
 | Test the link before starting<br>`checkbox_link_probe` | More | Off | On; Off | Off by default. A new stream at the automatic bitrate first times a short download from a Rubylight PC that offers it and starts at no more than 80 % of the result (never below 2 Mbit/s). Resumes, a bitrate you set and PyroWave are not tested. Off because it started streams lower, with more loss and freezes, in our measurement. |
 | PyroWave frame pace<br>`pace_calibration` | More | No stored default | Action | Opens a saved PC's PyroWave frame pace on that PC's settings, where it is measured: the fastest pace at which the PC's PyroWave frames arrive whole. Shown while a paired PC can measure it or has one saved; with several it asks which one first. Stores nothing here. |
 | Show decode time after streaming<br>`checkbox_enable_post_stream_toast` | More | Off | On; Off | Enable to see the average decode time after a session ends; it is not end-to-end latency. |

@@ -8,6 +8,7 @@ import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
 import android.view.InputDevice;
+import androidx.preference.PreferenceManager;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -18,7 +19,7 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * Debug-only, in-stream motion monitor. Samples are reported at the actual controller
+ * Opt-in, in-stream motion monitor. Samples are reported at the actual controller
  * motion transmission call sites, not from a separate Android sensor subscription.
  */
 public final class GyroDiagnosticOverlay {
@@ -29,6 +30,8 @@ public final class GyroDiagnosticOverlay {
     private static volatile String latest = "Waiting for controller motion...";
     private static volatile boolean recording;
     private static volatile boolean flydigiCandidateEnabled;
+    public static final String PREF_SHOW_DIAGNOSTICS = "checkbox_show_gyro_diagnostics";
+    private static volatile boolean enabled;
 
     /** Manual test setting; never enabled automatically. */
     static boolean isFlydigiCandidateEnabled() {
@@ -41,6 +44,8 @@ public final class GyroDiagnosticOverlay {
     private GyroDiagnosticOverlay() {}
 
     public static void report(String path, int controller, byte type, float x, float y, float z) {
+        // Skip formatting and recording unless diagnostics are explicitly enabled.
+        if (!enabled) return;
         String label = type == com.limelight.nvstream.jni.MoonBridge.LI_MOTION_TYPE_GYRO
                 ? "gyro" : "accel";
         latest = String.format(Locale.US, "%s controller=%d %s\nX=%+.4f  Y=%+.4f  Z=%+.4f",
@@ -55,7 +60,11 @@ public final class GyroDiagnosticOverlay {
     }
 
     public static void attach(Activity host) {
-        if (!com.limelight.BuildConfig.DEBUG) return;
+        enabled = PreferenceManager.getDefaultSharedPreferences(host)
+                .getBoolean(PREF_SHOW_DIAGNOSTICS, false);
+        if (!enabled) return;
+        visible = true;
+        flydigiCandidateEnabled = false;
         activity = host;
         FrameLayout root = host.findViewById(android.R.id.content);
         LinearLayout panel = new LinearLayout(host);
@@ -66,7 +75,7 @@ public final class GyroDiagnosticOverlay {
         TextView label = new TextView(host);
         label.setTextColor(Color.WHITE);
         label.setTextSize(12);
-        label.setText("GYRO DIAGNOSTICS (debug)\nWaiting for controller motion...");
+        label.setText("GYRO DIAGNOSTICS\nWaiting for controller motion...");
         panel.addView(label);
         display = label;
 
@@ -162,7 +171,7 @@ public final class GyroDiagnosticOverlay {
         @Override public void run() {
             TextView target = display;
             if (target != null && activity != null) {
-                target.setText("GYRO DIAGNOSTICS (debug)\n" + latest +
+                target.setText("GYRO DIAGNOSTICS\n" + latest +
                         (recording ? "\nRECORDING" : ""));
                 mainHandler.postDelayed(this, 100);
             }
@@ -171,6 +180,7 @@ public final class GyroDiagnosticOverlay {
 
     public static void detach(Activity host) {
         if (activity == host) {
+            enabled = false;
             mainHandler.removeCallbacks(refresh);
             display = null;
             activity = null;

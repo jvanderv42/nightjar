@@ -94,6 +94,7 @@ public class SettingsKeysTest {
             com.limelight.ui.AppTheme.OLED_BLACK, // AppTheme, including activities opened directly
             com.limelight.ui.AppTheme.ALWAYS_DARK,
             com.limelight.ui.AppTheme.HIGH_CONTRAST, // AppTheme and the contrast overlay
+            com.limelight.binding.input.GyroDiagnosticOverlay.PREF_SHOW_DIAGNOSTICS, // opt-in gyro monitor
             com.limelight.ui.AppTheme.UI_SCALE, // NightjarActivity.attachBaseContext
             com.limelight.ui.AppTheme.UI_MODE, // NightjarActivity.attachBaseContext
             com.limelight.ui.Motion.REDUCE_MOTION, // Motion
