@@ -58,7 +58,9 @@ Android gyro input    ────────►   Controller-specific axis map
 
 The mapper changes how **controller motion input** is interpreted by Nightjar before that motion is forwarded to the PC. It does **not** remap physical thumbsticks, require game modification, or promise that every PC game will use gyro natively. The host/game must support the resulting motion input, directly or through an input-mapping layer such as Steam Input.
 
-## Getting started
+## Install
+
+### Getting started
 
 1. **Download the universal Android APK** from the button above or the [release page](https://github.com/jvanderv42/nightjar/releases/tag/custom-5.2.0-1).
 2. Install it on an Android handheld, phone, tablet or Android TV device. Android may ask you to allow installation from the browser or file manager.
@@ -113,7 +115,9 @@ That means you can keep the original Nightjar installed, complete with its setti
 
 The custom build is **non-debuggable** and uses the visible app name **Nightjar** (without “Debug”). It is signed with the fork's own signing certificate, **not** the original Nightjar release certificate. It cannot be installed over the official application.
 
-## Downloads and integrity
+## Download
+
+### Downloads and integrity
 
 **Current public release:** [Nightjar Custom 5.2.0 — Universal Android](https://github.com/jvanderv42/nightjar/releases/tag/custom-5.2.0-1)
 
