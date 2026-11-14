@@ -111,7 +111,7 @@ This is **not** a replacement APK for the official Nightjar installation. Its An
 com.butterpollo.client.custom
 ```
 
-That means you can keep the original Nightjar installed, complete with its settings and paired PCs, while trying this version. The custom app maintains its **own** settings, pairing identity and controller profiles; you will pair and configure it once. Future versions of this custom fork can update it in place when they retain the same application ID, signing certificate and a compatible version code.
+That means you can keep the original Nightjar installed, complete with its settings and paired PCs, while trying this version. The custom app maintains its **own** settings, pairing identity and controller profiles; you will pair and configure it once. Download future custom versions from this fork's [Releases page](https://github.com/jvanderv42/nightjar/releases) and install them over the custom app to retain its settings, provided they use the same signing key and a higher version code. The upstream Nightjar in-app update checker is disabled in this custom package because official-signed APKs cannot update it.
 
 The custom build uses the visible app name **Nightjar**. It is signed with the fork's own signing certificate, **not** the original Nightjar release certificate. It cannot be installed over the official application.
 
