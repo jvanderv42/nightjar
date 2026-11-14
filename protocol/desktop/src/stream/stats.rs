@@ -14,7 +14,7 @@ pub(super) fn early_line(now: (u64, u64), last: (u64, u64), secs: f64) -> String
 pub(super) fn link_notice_line(notice: &LinkNotice) -> String {
     let mbps = f64::from(notice.current_kbps) / 1000.0;
     let mbps = if mbps >= 10.0 { format!("{mbps:.0}") } else { format!("{mbps:.1}") };
-    trf("Host lowered the bitrate to {} Mbps: network", &[&mbps])
+    trf("PC lowered the bitrate to {} Mbps: network", &[&mbps])
 }
 
 /// The overlay's host pipeline line: the frames per second each host stage handled over the
@@ -270,6 +270,11 @@ impl Streaming {
             "Render".into(),
             format!("{:.2} ms", avg(w.render_us as f64, w.shown) / 1000.0),
         ));
+        // The present call apart: the wait for the GPU, the display and the compositor is not Nightjar's drawing.
+        lines.push((
+            "Present wait".into(),
+            format!("{:.2} ms (GPU, display, compositor)", avg(w.present_us as f64, w.shown) / 1000.0),
+        ));
         let mut pacing = pacing_label(self.pacer.mode, self.vrr.fell_back).to_owned();
         if self.vrr.sync != present::VrrSync::Off && self.pacer.mode != PacingMode::Vsync {
             pacing.push_str(&format!(", VRR sync {}", self.vrr.sync.label()));
@@ -293,6 +298,15 @@ impl Streaming {
         lines.push(("Pacing".into(), pacing));
         if self.facts.phase_lock && self.pacer.mode == PacingMode::Vsync {
             lines.push(("Phase lock".into(), self.phase.lead_us.map_or_else(|| "Waiting for display timing".into(), |lead| format!("{:.2} ms lead", f64::from(lead) / 1000.0))));
+        }
+        // With the setting on: what the PC's model learnt and the shift, or that the PC refused it.
+        let frame_warp_line = match (&self.frame_warp, self.facts.frame_warp_refused) {
+            (Some(presenter), _) => Some(frame_warp::status_line(Some(&presenter.status()))),
+            (None, true) => Some(frame_warp::status_line(None)),
+            (None, false) => None,
+        };
+        if let Some(line) = &frame_warp_line {
+            lines.push(("Frame Warp".into(), line.clone()));
         }
         lines.extend(host_lines(&w));
         if w.latency_n > 0 {
@@ -359,6 +373,7 @@ impl Streaming {
         self.last_wire_bytes = wire_bytes;
         lines.extend(overlay::wire(&measures));
         let mut statistics = overlay::statistics(&lines[0].1, &measures);
+        statistics.extend(frame_warp_line.map(|line| ("Frame Warp".to_owned(), line)));
         let now_ms = self.started.elapsed().as_millis() as u64;
         let wanted = self.overlay_visible && self.overlay_mode != OverlayMode::Compact && self.facts.role != AppRole::InputOnly;
         if let Some(generation) = self.hardware_poll.due(now_ms, wanted) {

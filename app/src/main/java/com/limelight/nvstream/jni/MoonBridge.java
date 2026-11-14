@@ -585,6 +585,9 @@ public class MoonBridge {
     private static volatile boolean pyrowaveEarlyRequested;
     private static volatile boolean codecDirectRequested;
     private static volatile boolean receiveDecodePriorityRequested;
+    private static volatile boolean receiveCoalescingRequested = true;
+    private static volatile boolean frameWarpWanted;
+    private static volatile boolean frameWarpRequested;
 
     /** Call before startConnection(): whether the next stream should use the Rust engine. */
     public static void requestRustEngine(boolean requested) {
@@ -631,6 +634,129 @@ public class MoonBridge {
      */
     public static void requestReceiveDecodePriority(boolean requested) {
         receiveDecodePriorityRequested = requested;
+    }
+
+    /**
+     * Call before startConnection(): "Group incoming video packets" for the next stream (UDP_GRO
+     * on the video socket). Only the Rust engine asks the kernel to coalesce.
+     */
+    public static void requestReceiveCoalescing(boolean requested) {
+        receiveCoalescingRequested = requested;
+    }
+
+    /**
+     * Call before startConnection(): Frame Warp for the next stream (docs/frame-warp.md). {@code wanted} is the
+     * setting, {@code listed} whether the host's serverinfo lists it. Only the Rust engine draws it.
+     */
+    public static void requestFrameWarp(boolean wanted, boolean listed) {
+        frameWarpWanted = wanted;
+        frameWarpRequested = wanted && listed;
+    }
+
+    /** frameWarpStatus(): no Frame Warp line (the setting is off). */
+    public static final int FRAME_WARP_OFF = 0;
+    /** frameWarpStatus(): the setting is on, the host does not offer it. */
+    public static final int FRAME_WARP_NOT_OFFERED = 1;
+    /** frameWarpStatus(): offered; the host has not learned this game's camera yet. */
+    public static final int FRAME_WARP_LEARNING = 2;
+    /** frameWarpStatus(): locked to the mouse; the gain is picture pixels per mouse count. */
+    public static final int FRAME_WARP_MOUSE = 3;
+    /** frameWarpStatus(): locked to the right stick; the gain is picture pixels per second of full stick. */
+    public static final int FRAME_WARP_STICK = 4;
+    /** frameWarpStatus(): asked for, but this stream draws without it (the renderer, or the classic engine). */
+    public static final int FRAME_WARP_OFF_FOR_STREAM = 5;
+    /** frameWarpForPts() and the C table: draw the picture as it is. */
+    public static final int FRAME_WARP_INACTIVE = -2;
+    /** frameWarpForPts(): shift the whole picture, there is no HUD mask. */
+    public static final int FRAME_WARP_NO_MASK = -1;
+    /** frameWarpMask(): the mask the caller holds is current. */
+    public static final int FRAME_WARP_MASK_UNCHANGED = -1;
+    /** frameWarpMask(): there is no mask any more. */
+    public static final int FRAME_WARP_MASK_CLEARED = -2;
+    /** frameWarpMask(): the cells array is too small; size holds what it needs. */
+    public static final int FRAME_WARP_MASK_TOO_SMALL = -3;
+
+    /**
+     * Whether the running stream draws with Frame Warp: asked for, on the Rust engine, the host announced it, and no
+     * renderer declined it. Known from the end of the RTSP handshake, so while the renderers start.
+     */
+    public static boolean isFrameWarpStream() {
+        return frameWarpRequested && rustStream && RustBridge.frameWarpOffered();
+    }
+
+    /** Frame Warp was asked for but this stream fell back to the classic engine, which cannot draw it. */
+    public static boolean frameWarpNeedsEngine() {
+        return frameWarpRequested && rustEngineRequested && !rustStream;
+    }
+
+    /** The address of the C table the native renderers take (jni/frame_warp_api.h), 0 without Frame Warp. */
+    public static long frameWarpApi() {
+        return isFrameWarpStream() ? RustBridge.frameWarpApi() : 0;
+    }
+
+    /** The decoder queued frame {@code frame} with presentation time {@code ptsUs}; call only on a Frame Warp stream. */
+    public static void frameWarpNoteFrame(long ptsUs, int frame) {
+        RustBridge.frameWarpNoteFrame(ptsUs, frame);
+    }
+
+    /** The floats frameWarpForPts() and frameWarpPeekForPts() write, as the C table's warp() and peek(). */
+    public static final int FRAME_WARP_FLOATS = 8;
+
+    /**
+     * The shift for the picture queued with {@code ptsUs}, drawn now: {@code out} (FRAME_WARP_FLOATS floats) gets
+     * the shift of the picture's centre as fractions of the picture (x, y) and in picture pixels (x, y), then the lens
+     * terms the rest of the picture is turned through (k.x, k.y, n.x, n.y; 0, 0, 1, 1 for a flat picture, which is
+     * sampled at its position less the shift), all with y down. Returns the HUD mask generation,
+     * FRAME_WARP_NO_MASK, or FRAME_WARP_INACTIVE to draw the picture as it is (also when {@code out} is shorter).
+     */
+    public static int frameWarpForPts(long ptsUs, float[] out) {
+        return rustStream ? RustBridge.frameWarpForPts(ptsUs, out) : FRAME_WARP_INACTIVE;
+    }
+
+    /**
+     * As {@link #frameWarpForPts}, without counting it in the overlay's statistics: whether the picture on screen
+     * should be drawn again. What a redraw then draws goes through frameWarpForPts().
+     */
+    public static int frameWarpPeekForPts(long ptsUs, float[] out) {
+        return rustStream ? RustBridge.frameWarpPeekForPts(ptsUs, out) : FRAME_WARP_INACTIVE;
+    }
+
+    /** frameWarpInputState(): set while the tracked right stick is deflected. */
+    public static final long FRAME_WARP_STICK_DEFLECTED = 1L << 32;
+
+    /**
+     * Whether a redraw between pictures can have anything new to show, without asking for a shift: the count of
+     * mouse and controller inputs sent (the low 32 bits; read it before a draw's frameWarpForPts() and compare)
+     * and FRAME_WARP_STICK_DEFLECTED. 0 without a stream.
+     */
+    public static long frameWarpInputState() {
+        return rustStream ? RustBridge.frameWarpInputState() : 0;
+    }
+
+    /**
+     * The HUD mask when its generation is not {@code known} (-1 for none): {@code size} gets width and height and
+     * {@code cells}, when it has room, one byte per cell (0 or 255, rows from the top). Returns the generation or a
+     * FRAME_WARP_MASK_* code.
+     */
+    public static int frameWarpMask(int known, int[] size, byte[] cells) {
+        return rustStream ? RustBridge.frameWarpMask(known, size, cells) :
+                known < 0 ? FRAME_WARP_MASK_UNCHANGED : FRAME_WARP_MASK_CLEARED;
+    }
+
+    /** The renderer cannot draw Frame Warp for this stream: the host stops its work for it. */
+    public static void frameWarpDecline() {
+        if (frameWarpRequested && rustStream) RustBridge.frameWarpDecline();
+    }
+
+    /**
+     * The overlay's Frame Warp line: a FRAME_WARP_* state, and in {@code out} (4 floats) the gain, the game's lag in
+     * ms, the shift and the last second's peak in picture pixels.
+     */
+    public static int frameWarpStatus(float[] out) {
+        if (!frameWarpWanted) return FRAME_WARP_OFF;
+        if (!frameWarpRequested) return FRAME_WARP_NOT_OFFERED;
+        if (!rustStream) return FRAME_WARP_OFF_FOR_STREAM;
+        return RustBridge.frameWarpStatus(out);
     }
 
     /** Whether the running stream (or the last one) hands PyroWave frames over while they arrive. */
@@ -742,6 +868,10 @@ public class MoonBridge {
         } else {
             LimeLog.info("Streaming engine: " + StreamEngine.summary());
         }
+        if (frameWarpRequested && !rust) {
+            // The renderer says so on screen, in the user's language.
+            LimeLog.warning("Frame Warp: needs the New streaming engine; this stream runs without it");
+        }
         if (audioPassthroughRequested != 0 && !rust) {
             LimeLog.warning("Audio passthrough: needs the New streaming engine; this stream plays Opus");
             bridgeClDisplayMessage("Audio passthrough needs the New streaming engine. This stream plays Opus.");
@@ -762,7 +892,8 @@ public class MoonBridge {
                     pyrowaveLinkMbps, pyrowavePaceMbps, clientWireless, networkGracePeriodMs, packed444Requested, packedModes,
                     remoteMonitor, unbatchedInput, networkPriority, roamingRequested, roamingMeteredRequested,
                     audioPassthroughRequested, hdrFormatRequested, videoFecRequested, pyrowaveEarlyRequested,
-                    codecDirectRequested, receiveDecodePriorityRequested);
+                    codecDirectRequested, receiveDecodePriorityRequested, frameWarpRequested,
+                    receiveCoalescingRequested);
         }
         return cStartConnection(address, appVersion, gfeVersion, rtspSessionUrl, serverCodecModeSupport,
                 width, height, fps, bitrate, packetSize, streamingRemotely, audioConfiguration,
@@ -843,6 +974,27 @@ public class MoonBridge {
     private static native int cSendTouchEvent(byte eventType, int pointerId, float x, float y, float pressure,
                                             float contactAreaMajor, float contactAreaMinor, short rotation);
 
+    /** The host takes no touchpad fingers, or the stream runs on the C engine, which has no touchpad packets. */
+    public static final int TOUCHPAD_NONE = 0;
+    public static final int TOUCHPAD_INDIVIDUAL = 1;
+    public static final int TOUCHPAD_FRAME = 2;
+
+    /** How this stream takes a physical touchpad's fingers ("Touchpad gestures on the PC"). */
+    public static int touchpadTransport() {
+        return rustStream ? RustBridge.touchpadTransport() : TOUCHPAD_NONE;
+    }
+
+    /** One motion event of a physical touchpad; 0, or the input error. */
+    public static int touchpadFrame(int device, int[] ids, float[] xs, float[] ys, float[] pressures, int count,
+                                    boolean button, short widthMm, short heightMm) {
+        return rustStream ? RustBridge.touchpadFrame(device, ids, xs, ys, pressures, count, button, widthMm, heightMm) : LI_ERR_UNSUPPORTED;
+    }
+
+    /** Lifts the touchpad's fingers on the host. */
+    public static int touchpadCancel() {
+        return rustStream ? RustBridge.touchpadCancel() : LI_ERR_UNSUPPORTED;
+    }
+
     public static int sendPenEvent(byte eventType, byte toolType, byte penButtons, float x, float y,
                                           float pressure, float contactAreaMajor, float contactAreaMinor,
                                           short rotation, byte tilt) {
@@ -851,6 +1003,11 @@ public class MoonBridge {
     private static native int cSendPenEvent(byte eventType, byte toolType, byte penButtons, float x, float y,
                                           float pressure, float contactAreaMajor, float contactAreaMinor,
                                           short rotation, byte tilt);
+
+    /** Controller identity (0x55000080): the Rust engine only, which drops it for a host without it. */
+    public static int sendControllerIdentityEvent(byte controllerNumber, int vendorId, int productId) {
+        return rustStream ? RustBridge.sendControllerIdentityEvent(controllerNumber, vendorId, productId) : 0;
+    }
 
     public static int sendControllerArrivalEvent(byte controllerNumber, short activeGamepadMask, byte type, int supportedButtonFlags, short capabilities) {
         return rustStream ? RustBridge.sendControllerArrivalEvent(controllerNumber, activeGamepadMask, type, supportedButtonFlags, capabilities) : cSendControllerArrivalEvent(controllerNumber, activeGamepadMask, type, supportedButtonFlags, capabilities);
@@ -1091,10 +1248,13 @@ public class MoonBridge {
         return rustStream ? RustBridge.sendClockSyncProbe() : cSendClockSyncProbe();
     }
     private static native boolean cSendClockSyncProbe();
-    public static void presentClockStart(int minIntervalUs) {
-        if (rustStream) RustBridge.presentClockStart(minIntervalUs); else cPresentClockStart(minIntervalUs);
+    // adaptive: the display refreshes when a frame comes (adaptive refresh rate), so a frame much
+    // later than the typical one is shown when ready instead of every frame waiting for it.
+    public static void presentClockStart(int minIntervalUs, boolean adaptive) {
+        if (rustStream) RustBridge.presentClockStart(minIntervalUs, adaptive);
+        else cPresentClockStart(minIntervalUs, adaptive);
     }
-    private static native void cPresentClockStart(int minIntervalUs);
+    private static native void cPresentClockStart(int minIntervalUs, boolean adaptive);
     public static void presentClockStop() {
         if (rustStream) RustBridge.presentClockStop(); else cPresentClockStop();
     }

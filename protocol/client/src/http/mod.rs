@@ -17,12 +17,14 @@ mod folders;
 pub mod foundation;
 mod hardware_metrics;
 mod identity;
+mod internet_play;
 mod launch;
 mod luminance;
 mod native;
 mod network_path;
 mod pairing;
 mod device_approval;
+mod session_guests;
 mod pc_power;
 pub mod pace;
 mod power;
@@ -61,6 +63,7 @@ pub use hardware_metrics::{
     GpuMetrics, HardwareMetrics, Readings, CPU_METRICS, GPU_METRICS, MAX_HARDWARE_METRICS_BYTES,
 };
 pub use identity::ClientIdentity;
+pub use internet_play::{InternetPlay, MAX_INTERNET_PLAY_BYTES};
 pub use launch::{
     asks_to_confirm_replace, parse_launch_reply, HostDisplay, LaunchRequest, Launched,
     CONFIRM_REPLACE, CORE_LAUNCH_PARAMETERS,
@@ -72,6 +75,10 @@ pub use device_approval::{
     FEATURE_PAIRING_APPROVE,
 };
 pub use network_path::{NetworkPath, MAX_NETWORK_PATH_BYTES};
+pub use session_guests::{
+    guest_ended, join_refused, GuestAction, GuestRequest, SessionGuest, SessionGuests, FEATURE_SESSION_GUESTS, GUESTS_POLL_MS,
+    GUEST_CONTROLLER, GUEST_KEYBOARD_MOUSE, GUEST_PERMISSIONS, GUEST_VIEW,
+};
 pub use pairing::{PairFailure, PairResult, PairStep};
 pub use pc_power::{
     host_words, update_arrived, HostUpdate, LateRefusal, PcPower, PcPowerOffer, PowerAvailability, FEATURE_RESTART, FEATURE_SHUTDOWN,

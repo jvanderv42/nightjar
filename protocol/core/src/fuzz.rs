@@ -5,8 +5,8 @@
 //! milliseconds each); a local fuzz run raises it to about a minute per target.
 
 use crate::{
-    audio_ext, control, cursor_shape, fec_report, keyboard_layout, pairing_uri, pen, phase_lock,
-    pipeline_rates, rate_change, roaming, steam_controller, text_input, usb, usbip,
+    audio_ext, control, controller_identity, cursor_shape, fec_report, frame_warp, keyboard_layout, pairing_uri,
+    pen, phase_lock, pipeline_rates, rate_change, roaming, steam_controller, text_input, transport_feedback, usb, usbip,
 };
 use alloc::{string::String, vec, vec::Vec};
 use proptest::collection::vec;
@@ -261,6 +261,106 @@ round_trip!(
     |v| v.encode()
 );
 round_trip!(
+    frame_warp_request,
+    (any::<bool>(), any::<u8>(), 0u16..2100, any::<bool>()).prop_map(|(enabled, controller, mask_max_width, lens)| {
+        frame_warp::FrameWarpRequest {
+            enabled,
+            controller: (controller < 20).then_some(controller),
+            mask_max_width,
+            lens,
+        }
+        .encode()
+        .to_vec()
+    }),
+    |b| frame_warp::FrameWarpRequest::decode(b),
+    |v| Some(v.encode().to_vec())
+);
+round_trip!(
+    frame_warp_tags,
+    (any::<u16>(), vec(any::<(u32, i32, i32, u32, u32)>(), 1..5)).prop_map(|(generation, tags)| {
+        frame_warp::Tags {
+            model_generation: generation,
+            tags: tags
+                .into_iter()
+                .map(|(frame, mouse_x, mouse_y, controller_seq, controller_held_us)| {
+                    frame_warp::Tag {
+                        frame,
+                        mouse_x,
+                        mouse_y,
+                        controller_seq,
+                        controller_held_us,
+                    }
+                })
+                .collect(),
+        }
+        .encode()
+        .unwrap_or_default()
+    }),
+    |b| frame_warp::Tags::decode(b),
+    |v| v.encode()
+);
+round_trip!(
+    frame_warp_model,
+    (
+        any::<(u16, bool, bool, u16, u16)>(),
+        any::<[f32; 4]>(),
+        0.0f32..0.5,
+        0usize..5,
+        any::<([f32; 2], u32)>(),
+        (0.0f32..=1.0, prop_oneof![Just(0.0f32), 1.0f32..=1_000_000.0]),
+    )
+        .prop_map(
+            |((generation, mouse_locked, stick_locked, w, h), gains, deadzone, exponent, (max_offset, lag_us), (confidence, focal))| {
+                frame_warp::Model {
+                    generation,
+                    mouse_locked,
+                    stick_locked,
+                    picture_width: w,
+                    picture_height: h,
+                    mouse_gain: [gains[0], gains[1]],
+                    stick_gain: [gains[2], gains[3]],
+                    stick_deadzone: deadzone,
+                    stick_exponent: frame_warp::STICK_EXPONENTS[exponent],
+                    max_offset,
+                    lag_us,
+                    confidence,
+                    focal,
+                }
+                .encode()
+                .map(|m| m.to_vec())
+                .unwrap_or_default()
+            }
+        ),
+    |b| frame_warp::Model::decode(b),
+    |v| v.encode().map(|m| m.to_vec())
+);
+round_trip!(
+    frame_warp_mask,
+    (any::<u16>(), 0u16..40, 0u16..6, vec(any::<u32>(), 0..12)).prop_map(
+        |(generation, width, height, words)| {
+            let mut mask = frame_warp::Mask::new(generation, width, height);
+            if width == 0 || height == 0 {
+                mask = frame_warp::Mask { generation, ..Default::default() };
+            }
+            for (slot, word) in mask.words.iter_mut().zip(words) {
+                *slot = word;
+            }
+            // Bits past a row's width are not on the wire.
+            let stride = frame_warp::Mask::stride(width);
+            if width % 32 != 0 {
+                for row in mask.words.chunks_mut(stride.max(1)) {
+                    if let Some(last) = row.last_mut() {
+                        *last &= (1u32 << (width % 32)) - 1;
+                    }
+                }
+            }
+            mask.encode().unwrap_or_default()
+        }
+    ),
+    |b| frame_warp::Mask::decode(b),
+    |v| v.encode()
+);
+round_trip!(
     fec_report,
     (
         any::<u32>(),
@@ -286,6 +386,38 @@ round_trip!(
         ),
     |b| fec_report::FecReport::decode(b),
     |v| Some(v.encode().to_vec())
+);
+round_trip!(
+    transport_feedback,
+    (
+        any::<u8>(),
+        any::<u16>(),
+        0u16..70,
+        any::<u32>(),
+        any::<u32>(),
+        any::<u16>(),
+        vec(
+            prop_oneof![any::<u16>(), Just(transport_feedback::NOT_RECEIVED)],
+            0..20
+        )
+    )
+        .prop_map(
+            |(flags, base, stride, seq, base_arrival_us, late, entries)| {
+                transport_feedback::TransportFeedback {
+                    flags,
+                    base,
+                    stride,
+                    seq,
+                    base_arrival_us,
+                    late,
+                    entries,
+                }
+                .encode()
+                .unwrap_or_default()
+            }
+        ),
+    |b| transport_feedback::TransportFeedback::decode(b),
+    |v| v.encode()
 );
 round_trip!(
     keyboard_layout,
@@ -511,6 +643,20 @@ round_trip!(
             }
         ),
     |b| steam_controller::SteamAttributes::decode(b).ok(),
+    |v| Some(v.encode().to_vec())
+);
+round_trip!(
+    controller_identity,
+    (0u8..16, any::<u16>(), any::<u16>()).prop_map(|(controller, vendor, product)| {
+        controller_identity::ControllerIdentity {
+            controller,
+            vendor,
+            product,
+        }
+        .encode()
+        .to_vec()
+    }),
+    |b| controller_identity::ControllerIdentity::decode(b).ok(),
     |v| Some(v.encode().to_vec())
 );
 round_trip!(

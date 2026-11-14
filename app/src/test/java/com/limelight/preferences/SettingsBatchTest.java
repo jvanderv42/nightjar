@@ -57,6 +57,25 @@ public class SettingsBatchTest {
     // Frame pacing and its neighbours
 
     @Test
+    public void displayQueueRecoveryShowsOnlyWhereTheWatchRuns() {
+        SharedPreferences p = prefs();
+        Application app = RuntimeEnvironment.getApplication();
+        for (String pacing : new String[] {"latency", "balanced"}) {
+            p.edit().clear().putString("frame_pacing", pacing).commit();
+            assertTrue(pacing, SettingRules.displayQueueRecoveryApplies(app, p));
+            // The PC's frame times schedule every frame, so the watch never runs (MediaCodecDecoderRenderer).
+            p.edit().putBoolean("checkbox_host_frame_times", true).commit();
+            assertFalse(pacing, SettingRules.displayQueueRecoveryApplies(app, p));
+            p.edit().putBoolean("checkbox_host_frame_times", false).putBoolean("checkbox_vrr", true).commit();
+            assertFalse(pacing, SettingRules.displayQueueRecoveryApplies(app, p));
+        }
+        for (String pacing : new String[] {"cap-fps", "smoothness"}) {
+            p.edit().clear().putString("frame_pacing", pacing).commit();
+            assertFalse(pacing, SettingRules.displayQueueRecoveryApplies(app, p));
+        }
+    }
+
+    @Test
     public void ruleFunctionsFollowTheStoredChoices() {
         SharedPreferences p = prefs();
         p.edit().clear().commit();
@@ -85,9 +104,12 @@ public class SettingsBatchTest {
         p.edit().putBoolean("checkbox_client_roaming", false).commit();
         assertTrue(SettingRules.clientRoamingApplies(p));
         assertFalse(SettingRules.roamingMeteredApplies(p));
+        assertTrue(SettingRules.receiveCoalescingApplies(p));
         p.edit().putBoolean("checkbox_client_roaming", true).putBoolean("checkbox_rust_engine", false).commit();
         assertFalse(SettingRules.clientRoamingApplies(p));
         assertFalse(SettingRules.roamingMeteredApplies(p));
+        // Grouping incoming video packets is the new engine's too.
+        assertFalse(SettingRules.receiveCoalescingApplies(p));
         // Passthrough: the new engine on Android 10 or later.
         assertFalse(SettingRules.audioPassthroughApplies(p, 29));
         p.edit().putBoolean("checkbox_rust_engine", true).commit();
@@ -96,17 +118,18 @@ public class SettingsBatchTest {
     }
 
     @Test
-    public void framePacingIsGreyedWhileHostFrameTimesOrAdaptiveRefreshReplaceIt() {
+    public void framePacingIsHiddenWhileHostFrameTimesOrVariableRefreshReplaceIt() {
         try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
             PreferenceScreen display = section(controller, "display");
-            Preference pacing = display.findPreference("frame_pacing");
-            assertTrue(pacing.isEnabled());
+            assertNotNull(display.findPreference("frame_pacing"));
             prefs().edit().putBoolean("checkbox_host_frame_times", true).commit();
-            assertFalse(pacing.isEnabled());
+            assertNull(display.findPreference("frame_pacing"));
             prefs().edit().putBoolean("checkbox_host_frame_times", false).commit();
-            assertTrue(pacing.isEnabled());
+            assertNotNull(display.findPreference("frame_pacing"));
             prefs().edit().putBoolean("checkbox_vrr", true).commit();
-            assertFalse(pacing.isEnabled());
+            assertNull(display.findPreference("frame_pacing"));
+            // Hiding it never changes the stored choice.
+            assertEquals("latency", prefs().getString("frame_pacing", "latency"));
         }
     }
 
@@ -134,15 +157,13 @@ public class SettingsBatchTest {
     public void theContentRateVoteNeedsTheLowerRefreshRateSwitch() {
         try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
             PreferenceScreen display = section(controller, "display");
-            Preference vote = display.findPreference("checkbox_content_rate_frame_rate");
-            assertEquals("checkbox_reduce_refresh_rate", vote.getDependency());
-            assertFalse(vote.isEnabled());
+            assertNull(display.findPreference("checkbox_content_rate_frame_rate"));
             ((SwitchPreference) display.findPreference("checkbox_reduce_refresh_rate")).setChecked(true);
-            assertTrue(vote.isEnabled());
-            // Adaptive refresh rate no longer decides it.
-            ((SwitchPreference) display.findPreference("checkbox_reduce_refresh_rate")).setChecked(false);
+            assertNotNull(display.findPreference("checkbox_content_rate_frame_rate"));
+            // Variable refresh rate replaces both rows.
             ((SwitchPreference) display.findPreference("checkbox_vrr")).setChecked(true);
-            assertFalse(vote.isEnabled());
+            assertNull(display.findPreference("checkbox_reduce_refresh_rate"));
+            assertNull(display.findPreference("checkbox_content_rate_frame_rate"));
         }
     }
 
@@ -195,16 +216,16 @@ public class SettingsBatchTest {
     // Automatic stream quality
 
     @Test
-    public void theQualityModeSitsUnderAutomaticBitrateAndItsLimitsShowOnlyWhenOn() {
+    public void theQualityModeSitsWithTheVideoSettingsAndItsLimitsShowOnlyWhenOn() {
         try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
             PreferenceScreen video = section(controller, "video");
-            java.util.List<String> keys = SettingsStructureTest.keys(groupOf(video, "checkbox_auto_bitrate"));
-            assertEquals(keys.indexOf("checkbox_auto_bitrate") + 1, keys.indexOf("adaptive_quality_mode"));
-            assertEquals("Lower resolution or frame rate when needed", video.findPreference("adaptive_quality_mode").getTitle().toString());
+            // Behind Video's More row, in the group after the main rows; its limits follow it while it is on.
+            assertSame(video.findPreference("category_basic_settings"), groupOf(video, "adaptive_quality_mode"));
+            assertEquals("Automatic quality", video.findPreference("adaptive_quality_mode").getTitle().toString());
             assertNull(video.findPreference("adaptive_quality_min_resolution"));
             assertNull(video.findPreference("adaptive_quality_min_fps"));
             prefs().edit().putString("adaptive_quality_mode", "balanced").commit();
-            keys = SettingsStructureTest.keys(groupOf(video, "checkbox_auto_bitrate"));
+            java.util.List<String> keys = SettingsStructureTest.keys(groupOf(video, "adaptive_quality_mode"));
             assertEquals(keys.indexOf("adaptive_quality_mode") + 1, keys.indexOf("adaptive_quality_min_resolution"));
             assertEquals(keys.indexOf("adaptive_quality_min_resolution") + 1, keys.indexOf("adaptive_quality_min_fps"));
             prefs().edit().putString("adaptive_quality_mode", "off").commit();
@@ -345,7 +366,7 @@ public class SettingsBatchTest {
             PreferenceScreen display = section(controller, "display");
             PreferenceScreen advanced = section(controller, "advanced");
             assertNull(display.findPreference("checkbox_vulkan_render"));
-            assertEquals("category_advanced_decoder", groupOf(advanced, "checkbox_vulkan_render").getKey());
+            assertEquals("category_advanced_settings", groupOf(advanced, "checkbox_vulkan_render").getKey());
             PreferenceScreen debug = section(controller, "debug");
             assertNull(display.findPreference("checkbox_full_range"));
             assertNull(advanced.findPreference("checkbox_full_range"));
@@ -376,6 +397,8 @@ public class SettingsBatchTest {
     public void theHostRenderScaleIsNamedAfterThePcRenderResolution() {
         assertEquals("PC render resolution",
                 RuntimeEnvironment.getApplication().getString(com.limelight.R.string.title_virtual_display_scale));
+        // It shows while the PC streams on its virtual display (SettingRules.virtualDisplayScaleApplies).
+        prefs().edit().putBoolean("checkbox_virtual_display", true).commit();
         try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
             Preference scale = section(controller, "display").findPreference("seekbar_virtual_display_scale");
             assertEquals("PC render resolution", scale.getTitle().toString());

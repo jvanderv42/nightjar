@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Settings shared with desktop Nightjar: Sharper colored text, Controllers, Mouse mode, When Nightjar
+     opens, group names, row hints and notices. -->
+<resources>
+    <string name="title_sharp_color">Schärferer farbiger Text</string>
+    <string name="summary_sharp_color">Volle Farbauflösung (4:4:4), damit farbiger Text und dünne Linien scharf bleiben. Schalte es ein, wenn sie unscharf wirken; braucht mehr Dekodierleistung und Unterstützung durch PC und Gerät.</string>
+    <string-array name="sharp_color_names">
+        <item>Aus</item>
+        <item>An</item>
+    </string-array>
+    <string name="title_controllers">Controller</string>
+    <string name="summary_controllers">„Je ein Spieler“ macht jeden Controller zu einem eigenen Spieler und passt für fast alle. „Ein Spieler“ macht jeden Controller zu Spieler 1; „Aus“ sendet keinen Controller an den PC.</string>
+    <string-array name="controllers_names">
+        <item>Aus</item>
+        <item>Ein Spieler</item>
+        <item>Je ein Spieler</item>
+    </string-array>
+    <string-array name="mouse_mode_names">
+        <item>Erfasst</item>
+        <item>Desktop-Zeiger</item>
+    </string-array>
+    <string-array name="start_screen_names">
+        <item>Start</item>
+        <item>Meine PCs anzeigen</item>
+        <item>Mein letztes Spiel fortsetzen</item>
+        <item>Ein gewähltes Spiel</item>
+    </string-array>
+    <string name="summary_host_display_location">Wie der PC das virtuelle Display des Streams neben seinen Monitoren anordnet. Die Auswahl „Exklusiv“ schaltet die Monitore des PCs während des Streams aus; danach gehen sie wieder an. Braucht Unterstützung durch den PC.</string>
+    <string name="summary_pace_calibration_row">Ermittelt und speichert das schnellste Tempo, bei dem die PyroWave-Frames eines PCs vollständig ankommen, für Verbindungen, die Frame-Enden verlieren, etwa ein USB-Ethernet-Dock. Dauert eine bis drei Minuten.</string>
+    <string name="summary_network_tests">Misst Ping, Jitter und Paketverlust, dazu die Download-Geschwindigkeit, sofern der PC das unterstützt.</string>
+    <string name="settings_category_touch_mouse">Touch und Maus</string>
+    <string name="settings_category_connection">Verbindung</string>
+    <string name="sharp_color_unavailable_pc">Schärferer farbiger Text ist mit diesem PC nicht verfügbar.</string>
+    <string name="sharp_color_unavailable_device">Schärferer farbiger Text ist auf diesem Gerät nicht verfügbar.</string>
+    <string name="sharp_color_stopped">Schärferer farbiger Text ist ausgefallen. Die Verbindung wird ohne ihn neu aufgebaut.</string>
+    <string name="sharp_color_hdr_dropped">Dieser Stream läuft in SDR: HDR ist auf diesem PC nicht zusammen mit schärferem farbigem Text verfügbar.</string>
+    <string name="hint_show_onscreen_controls">Ein Touch-Gamepad über dem Stream, zum Spielen ohne physischen Controller. Es verdeckt einen Teil des Bildes; senke „Deckkraft“, um mehr vom Spiel zu sehen.</string>
+    <string name="hint_mouse_speed">Wie schnell eine physische Maus den Zeiger des PCs bewegt. Die Touch-Modi haben eigene Tempo-Einstellungen.</string>
+    <string name="hint_trackpad_speed">Zeigertempo im Touch-Modus „Trackpad“.</string>
+    <string name="hint_local_cursor_speed">Zeigertempo im Touch-Modus „Lokaler Mauszeiger“. Beim Standardwert bewegt sich der Zeiger so weit wie dein Finger.</string>
+    <string name="hint_trackpad_acceleration_curve">Wie viel weiter schnelle Wischbewegungen reichen.</string>
+    <string name="hint_trackpad_momentum_glide">Wie weit der Zeiger nachgleitet.</string>
+    <string name="hint_pc_keyboard_size">Wie viel der Bildschirmhöhe die PC-Tastatur auf dem Bildschirm einnimmt. Größer bedeutet größere Tasten; kleiner lässt mehr vom Stream frei.</string>
+    <string name="hint_pc_keyboard_opacity">Wie durchsichtig die PC-Tastatur auf dem Bildschirm ist. Ein niedrigerer Wert zeigt mehr vom Stream dahinter.</string>
+    <string name="hint_vibrate_osc">Vibriert, wenn du Bildschirmtasten drückst (nicht bei den Tasten des Controllers „Klassisch“), sofern das Touch-Feedback des Systems an ist, und bei der Vibration eines Spiels, wenn kein physischer Controller sie übernimmt.</string>
+    <string name="hint_show_guide_button">Fügt den Bildschirmtasten eine Guide-Taste (Home oder PS) hinzu.</string>
+    <string name="hint_host_audio">Der Ton bleibt beim Streamen auf den Lautsprechern des PCs.</string>
+    <string name="hint_overlay_position">Die Ecke, in der die Leistungsanzeige erscheint.</string>
+    <string name="summary_reset_all">Setzt jede Einstellung auf den Standard zurück; PCs, Spiele, Profile und Sprache bleiben.</string>
+</resources>

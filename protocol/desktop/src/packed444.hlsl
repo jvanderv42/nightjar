@@ -95,7 +95,15 @@ float4 fragment(float4 position : SV_Position) : SV_Target {
 cbuffer Presentation : register(b1) {
     float4 destination;
     float linearOutput; float colorScale; float2 unused;
+    // Frame Warp (stream/frame_warp.rs): the shift in fractions of the picture, then the HUD
+    // mask's size in cells (0 for none). All zero draws the picture where it is. Then its lens
+    // terms (0, 0, 1, 1 for a flat picture).
+    float4 warp;
+    float4 warpLens;
 };
+// Frame Warp's HUD mask: byte x / 8 of row y holds cell x in bit x % 8.
+Texture2D<float> hudMask : register(t2);
+#include "frame_warp.hlsl"
 
 float3 reconstructRow(uint2 p, float weight) {
     if (packing == 2) return lerp(reconstruct(p), reconstruct(uint2(min(p.x + 1, width - 1), p.y)), weight);
@@ -109,8 +117,15 @@ float3 reconstructRow(uint2 p, float weight) {
 }
 
 float4 present(float4 position : SV_Position) : SV_Target {
-    float2 at = clamp((position.xy - destination.xy) * (float2(width, height) / destination.zw) - 0.5,
-                      0, float2(width - 1, height - 1));
+    float2 size = float2(width, height);
+    float2 q = (position.xy - destination.xy) * (size / destination.zw);
+    // Frame Warp, in the picture's pixels: whole ones when a flat picture is drawn at its own size.
+    float fade = 1;
+    if (any(warp != 0)) {
+        float2 shift = warp.xy * size;
+        q = frameWarpShifted(q, size, destination.z == width && destination.w == height && frameWarpFlat() ? round(shift) : shift, fade);
+    }
+    float2 at = clamp(q - 0.5, 0, float2(width - 1, height - 1));
     uint2 p = uint2(at);
     float3 rgb;
     if (destination.z != width || destination.w != height) {
@@ -123,6 +138,6 @@ float4 present(float4 position : SV_Position) : SV_Target {
         rgb = saturate(lerp(1.055 * pow(abs(rgb), 1.0 / 2.4) - 0.055,
                             rgb * 12.92, step(rgb, 0.0031308)));
     }
-    return float4(rgb, 1);
+    return float4(rgb * fade, 1);
 }
 #endif

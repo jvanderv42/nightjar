@@ -8,14 +8,15 @@ import com.limelight.binding.audio.MicProcessing;
 import com.limelight.binding.video.DisplayFrameRatePolicy;
 
 /**
- * Which settings apply given the others, so the Settings screens can disable or hide the ones that
- * would do nothing. The stream configuration enforces the same overrides when it reads the settings
+ * Which settings apply given the others, so the Settings screens can hide the ones that would do
+ * nothing (a hidden row keeps its value and comes back in its place). The stream configuration enforces the same overrides when it reads the settings
  * (adaptive refresh and host frame times both replace frame pacing); these only keep the screens honest.
  */
 final class SettingRules {
     static final String DROP_LATE_FRAMES = "checkbox_drop_late_frames";
     static final String FRAME_PACING = PreferenceConfiguration.FRAME_PACING_PREF_STRING;
     static final String HOST_FRAME_TIMES = PreferenceConfiguration.HOST_FRAME_TIMES_PREF_STRING;
+    static final String REAL_VRR = PreferenceConfiguration.REAL_VRR_PREF_STRING;
     static final String ADAPTIVE_QUALITY = "adaptive_quality_mode";
     static final String ADAPTIVE_QUALITY_MIN_RESOLUTION = "adaptive_quality_min_resolution";
     static final String ADAPTIVE_QUALITY_MIN_FPS = "adaptive_quality_min_fps";
@@ -29,6 +30,14 @@ final class SettingRules {
     static boolean vrrOn(Context context, SharedPreferences prefs) {
         return prefs.getBoolean(PreferenceConfiguration.VRR_PREF_STRING, false) &&
                 DisplayFrameRatePolicy.vrrOffered(context);
+    }
+
+    /**
+     * Real VRR shows frames at the PC's frame times with adaptive refresh; without it the switch for
+     * a fixed refresh does (PreferenceConfiguration.resolveHostFrameTimes).
+     */
+    static boolean realVrrApplies(Context context, SharedPreferences prefs) {
+        return vrrOn(context, prefs);
     }
 
     /** Frame pacing decides how frames are shown unless adaptive refresh or host frame times take over. */
@@ -87,6 +96,11 @@ final class SettingRules {
         return prefs.getBoolean(PreferenceConfiguration.RUST_ENGINE_PREF_STRING, true);
     }
 
+    /** Only the new streaming engine knows the shift each picture still needs. */
+    static boolean frameWarpApplies(SharedPreferences prefs) {
+        return prefs.getBoolean(PreferenceConfiguration.RUST_ENGINE_PREF_STRING, true);
+    }
+
     /**
      * Whether this device has mobile data, asked per device at runtime. Rows about mobile data show only there,
      * or where a value set earlier still acts, so it can be seen and undone.
@@ -107,11 +121,105 @@ final class SettingRules {
                 prefs.getBoolean(PreferenceConfiguration.CLIENT_ROAMING_PREF_STRING, true);
     }
 
+    /** Grouping incoming video packets (UDP_GRO) is the new streaming engine's. */
+    static boolean receiveCoalescingApplies(SharedPreferences prefs) {
+        return prefs.getBoolean(PreferenceConfiguration.RUST_ENGINE_PREF_STRING, true);
+    }
+
     /** The stick settings belong to the modern controller only. */
     static boolean modernControllerApplies(SharedPreferences prefs) {
         return PreferenceConfiguration.OSC_STYLE_MODERN.equals(
                 PreferenceConfiguration.oscStyle(prefs.getString(PreferenceConfiguration.OSC_STYLE_PREF_STRING, null)));
     }
+
+    /** The bitrate slider is the player's while Automatic bitrate is off. */
+    static boolean bitrateShown(SharedPreferences prefs) {
+        return PreferenceConfiguration.isBitrateUserSet(prefs);
+    }
+
+    private static boolean pyroWaveChosen(SharedPreferences prefs) {
+        return "forcepyrowave".equals(prefs.getString("video_format", "auto"));
+    }
+
+    /** Sharper colored text: PyroWave's 4:4:4 is its own codec choice. */
+    static boolean sharpColorApplies(SharedPreferences prefs) {
+        return !pyroWaveChosen(prefs);
+    }
+
+    /** Less color banding is 10-bit SDR: not with PyroWave, and HDR is 10-bit already. */
+    static boolean sdr10Applies(SharedPreferences prefs) {
+        return !pyroWaveChosen(prefs) && !prefs.getBoolean("checkbox_enable_hdr", false);
+    }
+
+    /** A lower refresh rate is chosen while adaptive refresh is off. */
+    static boolean reduceRefreshRateApplies(Context context, SharedPreferences prefs) {
+        return !vrrOn(context, prefs);
+    }
+
+    /** Matching the game's frame rate needs the screen to be allowed below the stream's rate. */
+    static boolean contentRateApplies(Context context, SharedPreferences prefs) {
+        return reduceRefreshRateApplies(context, prefs) && prefs.getBoolean("checkbox_reduce_refresh_rate", false);
+    }
+
+    /**
+     * Display queue recovery works on a fixed refresh with Lowest latency or Balanced pacing (DisplayQueueWatch).
+     * With the PC's frame times every frame is scheduled and the watch never runs (MediaCodecDecoderRenderer), as
+     * frame pacing itself does not apply then.
+     */
+    static boolean displayQueueRecoveryApplies(Context context, SharedPreferences prefs) {
+        String pacing = prefs.getString(FRAME_PACING, PreferenceConfiguration.DEFAULT_FRAME_PACING);
+        return framePacingApplies(context, prefs) && ("latency".equals(pacing) || "balanced".equals(pacing));
+    }
+
+    /** Video position moves a picture that leaves room: Fit or 1:1 pixels. */
+    static boolean videoAlignmentApplies(SharedPreferences prefs) {
+        int mode = com.limelight.ui.VideoScaling.resolve(prefs.getString(com.limelight.ui.VideoScaling.PREF, null),
+                prefs.getBoolean(com.limelight.ui.VideoScaling.STRETCH_PREF, false));
+        return mode == com.limelight.ui.VideoScaling.FIT || mode == com.limelight.ui.VideoScaling.NATIVE;
+    }
+
+    /** The PC renders at a scale of the stream only on its virtual display. */
+    static boolean virtualDisplayScaleApplies(SharedPreferences prefs) {
+        return prefs.getBoolean("checkbox_virtual_display", false);
+    }
+
+    /** Controllers is not Off: the controller rows apply. */
+    static boolean controllersOn(SharedPreferences prefs) {
+        return ControllersChoice.read(prefs) != ControllersChoice.OFF;
+    }
+
+    /** The controller mouse's own rows, while controller mouse mode is on. */
+    static boolean controllerMouseApplies(SharedPreferences prefs) {
+        return controllersOn(prefs) && prefs.getBoolean("checkbox_mouse_emulation", true);
+    }
+
+    /** The on-screen controls' rows, while they are shown. */
+    static boolean onScreenControlsOn(SharedPreferences prefs) {
+        return prefs.getBoolean("checkbox_show_onscreen_controls", false);
+    }
+
+    /** The microphone's rows, while it is sent. */
+    static boolean micOn(SharedPreferences prefs) {
+        return prefs.getBoolean(PreferenceConfiguration.ENABLE_MIC_PREF_STRING, false);
+    }
+
+    /** Where the overlay sits, while it is shown. */
+    static boolean overlayOn(SharedPreferences prefs) {
+        return OverlayChoice.read(prefs) != 0;
+    }
+
+    /** Rows hidden while Controllers is Off (Controls › Controllers and the stream menu's controller rows). */
+    static final String[] CONTROLLER_ROWS = {"checkbox_flip_face_buttons", "list_gamepad_quit_combo", "seekbar_deadzone",
+            "seekbar_trigger_deadzone", "checkbox_gamepad_motion_sensors", "checkbox_disable_rumble", "checkbox_mouse_emulation",
+            "checkbox_gamepad_touchpad_as_mouse", "list_guide_menu_hold", "checkbox_back_opens_menu", "checkbox_back_as_guide",
+            "list_stream_menu_button_y", "list_stream_menu_button_x", "list_stream_menu_button_lb", "list_stream_menu_button_rb"};
+    /** Rows hidden while the on-screen controls are not shown. */
+    static final String[] ON_SCREEN_ROWS = {"list_osc_style", "checkbox_vibrate_osc", "checkbox_only_show_L3R3",
+            "checkbox_onscreen_own_player", "checkbox_show_guide_button", "checkbox_show_touchpad_button",
+            PreferenceConfiguration.OSC_STEAM_CONTROLS_PREF_STRING, "seekbar_osc_opacity", "reset_osc"};
+    /** Rows hidden while the microphone is not sent. */
+    static final String[] MIC_ROWS = {"checkbox_mic_button", PreferenceConfiguration.MIC_ECHO_PREF_STRING,
+            PreferenceConfiguration.MIC_NOISE_PREF_STRING, PreferenceConfiguration.MIC_AUTO_GAIN_PREF_STRING, "seekbar_mic_gain"};
 
     /** The audio effect a microphone setting turns on, or null for every other setting. */
     static MicProcessing.Effect micEffect(String key) {

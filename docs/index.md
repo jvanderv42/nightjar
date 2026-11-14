@@ -20,8 +20,9 @@ New to Nightjar? Read the [quick start](quick-start.md), then return here when y
 | [Home and the session menu](console.md) | Home and its views, game pages, Continue here, PC options and power, Microphone only, Join co-op, the Session and graphics page, TV and accessibility |
 | [Controls](controls.md) | Controllers, touch, mouse, keyboard, pen, on-screen controls and the microphone |
 | [Gamepad navigation](gamepad-navigation.md) | Using the menus and the PC keyboard with a controller |
-| [DualSense USB audio and haptics](dualsense-haptics.md) | Waveform haptics and controller audio over USB |
+| [USB DualSense audio and haptics](dualsense-haptics.md) | Waveform haptics and controller audio over USB |
 | [Video and latency](video-and-latency.md) | Codecs, HDR, PyroWave, refresh rate, scaling, bitrate, error correction and audio |
+| [Frame Warp](video-and-latency.md#frame-warp) | Camera turns on your screen's next refresh with a Rubylight PC, the HUD kept in place |
 | [Recovery and automatic quality](recovery-and-quality.md) | Recovering interrupted streams, riding out network drops, automatic resolution and frame rate |
 | [Clipboard, files, folders and USB devices](sharing.md) | Sharing with a PC whose host supports it |
 | [Launcher integrations](FRONTENDS.md) | Starting games from Beacon, ES-DE, Daijisho, Pegasus and Android TV's home screen |
@@ -53,6 +54,7 @@ New to Nightjar? Read the [quick start](quick-start.md), then return here when y
 | Page | Contents |
 | --- | --- |
 | [Building](building.md) | Toolchains, tests, signing, the release workflow and the [documentation checks](building.md#documentation-checks) |
+| [Code map](code-map.md) | Where each part lives, the files one kind of change touches, and the narrowest test for it |
 | [Translations](TRANSLATIONS.md) | Supported languages and how to contribute one |
 | [Device results](devices.md#send-results) | Submitting a benchmark from your device |
 
@@ -65,7 +67,7 @@ Design notes, measurements and audits for contributors. They describe internals 
 | [Beam racing](beam-racing.md), [early decode](early-decode.md), [mouse pace](mouse-pace.md) | Desktop presentation timing, and input sent at the mouse's pace |
 | [PyroWave GPU decoding](pyrowave-decode.md), [PyroWave decode stages](pyrowave-decode-stages.md) | The desktop PyroWave decoder and its measured stages |
 | [Refresh rate switching](expected-refresh-switch.md), [HDR on Android displays](expected-hdr10.md) | How the Android app requests refresh rates and HDR, and reports refusals |
-| [Client roaming](protocol/client-roaming.md), [host cursor shapes](protocol/cursor-shape.md) | Protocol extensions proposed for Moonlight-compatible hosts |
+| [Client roaming](protocol/client-roaming.md), [host cursor shapes](protocol/cursor-shape.md), [Frame Warp](protocol/frame-warp.md) | Protocol extensions proposed for Moonlight-compatible hosts |
 | [Android audit, October 2026](android-audit-2026-10.md) | Audit findings and their resolution |
 | [Rename history](RENAME.md) | The renames to Nightjar, and the identifiers that keep their old names |
 | [Demo mode](demo/README.md) | The offline demo fixtures used for screenshots and the promotional video |

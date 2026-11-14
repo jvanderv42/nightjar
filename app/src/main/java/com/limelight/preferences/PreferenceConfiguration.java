@@ -90,7 +90,9 @@ public class PreferenceConfiguration {
     private static final String OSC_OPACITY_PREF_STRING = "seekbar_osc_opacity";
     static final String LANGUAGE_PREF_STRING = "list_languages";
     private static final String SMALL_ICONS_PREF_STRING = "checkbox_small_icon_mode";
-    private static final String MULTI_CONTROLLER_PREF_STRING = "checkbox_multi_controller";
+    static final String MULTI_CONTROLLER_PREF_STRING = "checkbox_multi_controller";
+    /** Controllers: Off sends no physical controller (ControllersChoice writes it with checkbox_multi_controller). */
+    static final String SEND_CONTROLLERS_PREF_STRING = "checkbox_send_controllers";
     static final String AUDIO_CONFIG_PREF_STRING = "list_audio_config";
     /** The audio setting's 7.1.4 value, offered only where {@link Surround714#playable} says so. */
     static final String AUDIO_CONFIG_714 = "714";
@@ -104,6 +106,7 @@ public class PreferenceConfiguration {
     private static final String ONSCREEN_OWN_PLAYER_PREF_STRING = "checkbox_onscreen_own_player";
     private static final String SHOW_GUIDE_BUTTON_PREF_STRING = "checkbox_show_guide_button";
     private static final String SHOW_TOUCHPAD_BUTTON_PREF_STRING = "checkbox_show_touchpad_button";
+    public static final String OSC_STEAM_CONTROLS_PREF_STRING = "checkbox_osc_steam_controls";
     private static final String LEGACY_DISABLE_FRAME_DROP_PREF_STRING = "checkbox_disable_frame_drop";
     private static final String ENABLE_HDR_PREF_STRING = "checkbox_enable_hdr";
     static final String THERMAL_PROTECTION_PREF_STRING = "checkbox_thermal_protection";
@@ -159,10 +162,12 @@ public class PreferenceConfiguration {
     private static final String TRACKPAD_SENSITIVITY_Y_PREF_STRING = "seekbar_trackpad_sensitivity_y";
     private static final String TRACKPAD_SWAP_AXIS_PREF_STRING = "checkbox_trackpad_swap_axis";
     private static final String TRACKPAD_SCROLL_SPEED_PREF_STRING = "seekbar_trackpad_scroll_speed";
+    private static final String NATIVE_TOUCHPAD_PREF_STRING = "checkbox_native_touchpad";
     private static final String LATENCY_TOAST_PREF_STRING = "checkbox_enable_post_stream_toast";
     // Off: streams use the C engine. The Rust engine is a beta and falls back per stream.
     static final String RUST_ENGINE_PREF_STRING = "checkbox_rust_engine";
-    private static final String PACKED_444_PREF_STRING = "experimental_packed_444";
+    static final String PACKED_444_PREF_STRING = "experimental_packed_444";
+    static final String FRAME_WARP_PREF_STRING = "checkbox_frame_warp";
     private static final String CHIPSET_TUNING_PREF_STRING = "checkbox_experimental_chipset_tuning";
     static final String FRAME_PACING_PREF_STRING = "frame_pacing";
     private static final String ABSOLUTE_MOUSE_MODE_PREF_STRING = "checkbox_absolute_mouse_mode";
@@ -214,14 +219,19 @@ public class PreferenceConfiguration {
     // Client roaming (Experimental, Rust engine): on by default; onto mobile data only by choice.
     static final String CLIENT_ROAMING_PREF_STRING = "checkbox_client_roaming";
     static final String ROAMING_METERED_PREF_STRING = "checkbox_roaming_metered";
+    // "Group incoming video packets" (Rust engine): UDP_GRO on the video socket. On by default;
+    // the desktop's receive coalescing on Windows is the same setting.
+    static final String RECEIVE_COALESCING_PREF_STRING = "checkbox_receive_coalescing";
+    public static final String INTERNET_PLAY_PREF_STRING = "checkbox_internet_play";
     private static final String VIRTUAL_DISPLAY_PREF_STRING = "checkbox_virtual_display";
     private static final String VIRTUAL_DISPLAY_SCALE_PREF_STRING = "seekbar_virtual_display_scale";
     static final String VIRTUAL_DISPLAY_DPI_PREF_STRING = "list_virtual_display_dpi";
     /** The Windows scales "PC display scaling" offers (rlDisplayScale); 0 keeps the PC's own. */
     static final int[] VIRTUAL_DISPLAY_DPI_VALUES = {0, 100, 125, 150, 175, 200, 225, 250, 300, 350, 400, 450, 500};
-    private static final String YUV444_PREF_STRING = "checkbox_yuv444";
+    static final String YUV444_PREF_STRING = "checkbox_yuv444";
     static final String VRR_PREF_STRING = "checkbox_vrr";
     static final String HOST_FRAME_TIMES_PREF_STRING = "checkbox_host_frame_times";
+    static final String REAL_VRR_PREF_STRING = "checkbox_real_vrr";
     static final String CONTENT_RATE_FRAME_RATE_PREF_STRING = "checkbox_content_rate_frame_rate";
     static final String UPSCALING_PREF_STRING = "upscaling_mode";
     static final String UPSCALING_SHARPNESS_PREF_STRING = "upscaling_sharpness";
@@ -252,6 +262,7 @@ public class PreferenceConfiguration {
     private static final boolean ONSCREEN_OWN_PLAYER_DEFAULT = false;
     private static final boolean SHOW_GUIDE_BUTTON_DEFAULT = true;
     private static final boolean SHOW_TOUCHPAD_BUTTON_DEFAULT = false;
+    private static final boolean OSC_STEAM_CONTROLS_DEFAULT = false;
     private static final boolean DEFAULT_ENABLE_HDR = false;
     private static final boolean DEFAULT_ENABLE_SDR10 = false;
     private static final boolean DEFAULT_ENABLE_PIP = false;
@@ -325,6 +336,8 @@ public class PreferenceConfiguration {
     public boolean oscFloatingSticks = true;
     public int oscStickDeadzone = DEFAULT_OSC_STICK_DEADZONE;
     public String language;
+    /** Physical controllers reach the PC: Controllers is not Off. */
+    public boolean sendControllers = true;
     public boolean smallIconMode, multiController, usbDriver, usbDualSense, usbDualSenseHaptics, usbSwitchPro, flipFaceButtons;
     // Forward USB devices to a host that offers it during a stream (Rust engine only).
     public boolean usbForwarding;
@@ -334,6 +347,8 @@ public class PreferenceConfiguration {
     public boolean showGuideButton;
     /** The on-screen controller's Touchpad button: a PlayStation pad's touchpad click. */
     public boolean showTouchpadButton;
+    /** The classic on-screen controls add a Steam Controller's trackpads, back buttons and grip touch. */
+    public boolean oscSteamControls;
     public boolean enableHdr;
     /** Ask for 10-bit SDR when HDR is not streamed (see Sdr10Policy). Global only: not part of a PC's profile. */
     public boolean enableSdr10Bit;
@@ -380,6 +395,8 @@ public class PreferenceConfiguration {
     public boolean enableLatencyToast;
     public boolean rustEngine;
     public boolean experimentalPacked444;
+    /** Shifts each picture by the camera turn the host has not drawn yet (docs/frame-warp.md). */
+    public boolean frameWarp;
     // Opt-in decoder keys still being measured (docs/devices.md, Candidate per-chip changes)
     public boolean experimentalChipsetTuning;
     public boolean bindAllUsb;
@@ -428,6 +445,11 @@ public class PreferenceConfiguration {
     public boolean trackpadSwapAxis;
     /** Percent for two-finger scrolling in the touchpad gestures, 10 to 300. */
     public int trackpadScrollSpeed = DEFAULT_TRACKPAD_SCROLL_SPEED;
+    /**
+     * A physical touchpad's fingers go to a PC that takes them (touchpad packets), so the PC's own
+     * touchpad gestures work, instead of the gestures here moving the mouse.
+     */
+    public boolean nativeTouchpad;
     public boolean trackpadAcceleration, trackpadMomentum;
     public String trackpadAccelerationCurve, trackpadMomentumGlide, trackpadArea, threeFingerTap;
     /** The on-screen PC keyboard: layout id or "auto", its share of the window height and its opacity, both in percent. */
@@ -463,15 +485,28 @@ public class PreferenceConfiguration {
     public boolean dropLateFrames, useTextureView, unbatchedInput, networkPriority;
     public boolean displayQueueRecovery;
     public boolean submitHint, coveringDecoderSize, pyroWavePreacquire, codecDirect, receiveDecodePriority;
-    public boolean clientRoaming, roamingMetered;
+    public boolean clientRoaming, roamingMetered, receiveCoalescing;
+    /** Play over the internet: a punched path to a PC that offers it, after every direct path (InternetPlay). */
+    public boolean internetPlay;
     public boolean virtualDisplay, enableYuv444, vrr;
-    // Show frames at the host's frame times (HostFrameClock); replaces frame pacing.
+    // Real VRR (checkbox_real_vrr, on by default): with adaptive refresh, frames at the host's frame times.
+    // Without adaptive refresh "Show frames at the PC's frame times" (checkbox_host_frame_times, off by
+    // default) schedules them on the display's refresh instead. Two keys, because the old switch's stored
+    // off can't be told apart from its old default.
+    public boolean realVrr, gridHostFrameTimes;
+    // Show frames at the host's frame times (HostFrameClock): the switch of the two above that applies to
+    // this stream's adaptive refresh (resolveHostFrameTimes). Replaces frame pacing.
     public boolean hostFrameTimes;
     // Vote the content rate the host's frame times show to the display (Surface.setFrameRate).
     public boolean contentRateFrameRate;
     public int virtualDisplayScale;
     // The virtual display's Windows scale in percent; 0 keeps the PC's own.
     public int virtualDisplayDpi;
+    /**
+     * RTX HDR and RTX Video enhancement for this PC's streams (rlRtxHdr, rlRtxVideo): only a PC's own
+     * settings choose them, for a host that offers them; null follows the PC's app setting.
+     */
+    public Boolean rtxHdr, rtxVideo;
     // Where the launch values came from, for the stream log.
     public boolean resolutionFollowsScreen, fromPcProfile;
     // What this PC's displays do during the stream, and the PC's own stream values (for the log).
@@ -816,6 +851,11 @@ public class PreferenceConfiguration {
         return layerPacing != null ? framePacingValue(layerPacing) : getFramePacingValue(context);
     }
 
+    /** Real VRR with adaptive refresh, else the switch for a fixed refresh; again after a layer sets VRR. */
+    void resolveHostFrameTimes() {
+        hostFrameTimes = vrr ? realVrr : gridHostFrameTimes;
+    }
+
     /** The bitrate for this configuration's size and frame rate when nobody chose one. */
     int automaticBitrateKbps() {
         return getDefaultBitrate(getResolutionText(width, height), Integer.toString(fps));
@@ -923,6 +963,42 @@ public class PreferenceConfiguration {
         return OSC_STYLE_MODERN.equals(stored) ? OSC_STYLE_MODERN : OSC_STYLE_CLASSIC;
     }
 
+    /**
+     * "Sharper colored text" is Off or On: one choice stored in the two switches it replaced, Prefer YUV 4:4:4
+     * ({@code checkbox_yuv444}) and Full chroma ({@code experimental_packed_444}). Settings writes both the same;
+     * a store from before reads as On when either is on, so a player who had one gets both paths
+     * (native 4:4:4 first, packed full chroma where it cannot run). Nothing is rewritten, and older
+     * versions read the same two keys.
+     */
+    /**
+     * "Minimum resolution" and "Minimum frame rate" offer nightjar-policy's quality floors
+     * ({@code MIN_SHORT_EDGE_CHOICES}, {@code MIN_FPS_CHOICES}), the lists desktop Nightjar offers;
+     * SettingValueListsTest holds both to them. Every value an older version stored is among them.
+     */
+    static final int[] QUALITY_MIN_SHORT_EDGES = {360, 540, 720, 1080, 1440};
+    static final int[] QUALITY_MIN_FPS = {30, 45, 60, 90, 120};
+
+    /** A stored list value that is one of {@code choices}, else {@code fallback}. */
+    static int listChoice(String stored, int[] choices, int fallback) {
+        try {
+            int value = Integer.parseInt(stored.trim());
+            for (int choice : choices) {
+                if (choice == value) return value;
+            }
+        } catch (NumberFormatException | NullPointerException ignored) {
+        }
+        return fallback;
+    }
+
+    static boolean sharpColor(SharedPreferences prefs) {
+        return prefs.getBoolean(YUV444_PREF_STRING, false) || prefs.getBoolean(PACKED_444_PREF_STRING, false);
+    }
+
+    /** Writes Sharper colored text: On sets both switches, Off clears both. */
+    static void saveSharpColor(SharedPreferences.Editor editor, boolean automatic) {
+        editor.putBoolean(YUV444_PREF_STRING, automatic).putBoolean(PACKED_444_PREF_STRING, automatic);
+    }
+
     public static PreferenceConfiguration readPreferences(Context context, String hostUuid) {
         return readPreferences(context, hostUuid, HostCapabilityCache.load(context, hostUuid));
     }
@@ -971,6 +1047,7 @@ public class PreferenceConfiguration {
             profile.applyTo(config);
             // A PC, game or profile layer saved with VRR on can't turn it on where no screen has ARR.
             config.vrr &= com.limelight.binding.video.DisplayFrameRatePolicy.vrrOffered(context);
+            config.resolveHostFrameTimes();
             StreamLayers.Source resolution = layers.source(HostStreamProfile.Field.RESOLUTION);
             config.fromPcProfile = resolution == StreamLayers.Source.PC || resolution == StreamLayers.Source.GAME;
             if (config.resolutionFollowsScreen && !followedScreen) {
@@ -1558,6 +1635,7 @@ public class PreferenceConfiguration {
                 prefs.getInt(OSC_STICK_DEADZONE_PREF_STRING, DEFAULT_OSC_STICK_DEADZONE)));
         config.smallIconMode = prefs.getBoolean(SMALL_ICONS_PREF_STRING, getDefaultSmallMode(context));
         config.multiController = prefs.getBoolean(MULTI_CONTROLLER_PREF_STRING, DEFAULT_MULTI_CONTROLLER);
+        config.sendControllers = prefs.getBoolean(SEND_CONTROLLERS_PREF_STRING, true);
         config.usbDriver = prefs.getBoolean(USB_DRIVER_PREF_SRING, DEFAULT_USB_DRIVER);
         config.usbDualSense = prefs.getBoolean(USB_DUALSENSE_PREF_STRING, false);
         config.usbDualSenseHaptics = config.usbDualSense && prefs.getBoolean("checkbox_usb_dualsense_haptics", false);
@@ -1568,6 +1646,7 @@ public class PreferenceConfiguration {
         config.onscreenOwnPlayer = prefs.getBoolean(ONSCREEN_OWN_PLAYER_PREF_STRING, ONSCREEN_OWN_PLAYER_DEFAULT);
         config.showGuideButton = prefs.getBoolean(SHOW_GUIDE_BUTTON_PREF_STRING, SHOW_GUIDE_BUTTON_DEFAULT);
         config.showTouchpadButton = prefs.getBoolean(SHOW_TOUCHPAD_BUTTON_PREF_STRING, SHOW_TOUCHPAD_BUTTON_DEFAULT);
+        config.oscSteamControls = prefs.getBoolean(OSC_STEAM_CONTROLS_PREF_STRING, OSC_STEAM_CONTROLS_DEFAULT);
         config.enableHdr = prefs.getBoolean(ENABLE_HDR_PREF_STRING, DEFAULT_ENABLE_HDR) && !isShieldAtvFirmwareWithBrokenHdr();
         config.enableSdr10Bit = prefs.getBoolean(ENABLE_SDR10_PREF_STRING, DEFAULT_ENABLE_SDR10);
         config.enablePip = prefs.getBoolean(ENABLE_PIP_PREF_STRING, DEFAULT_ENABLE_PIP);
@@ -1581,11 +1660,9 @@ public class PreferenceConfiguration {
         config.quickResume = prefs.getBoolean(QUICK_RESUME_PREF_STRING, false);
         config.adaptiveQualityMode = com.limelight.nvstream.AdaptiveQualityController.Mode.parse(
                 prefs.getString("adaptive_quality_mode", "off"));
-        String qualityFloor = prefs.getString("adaptive_quality_min_resolution", "720");
-        config.qualityMinShortEdge = "360".equals(qualityFloor) ? 360 : "540".equals(qualityFloor) ? 540 :
-                "1080".equals(qualityFloor) ? 1080 : 720;
-        String qualityFps = prefs.getString("adaptive_quality_min_fps", "30");
-        config.qualityMinFps = "45".equals(qualityFps) ? 45 : "60".equals(qualityFps) ? 60 : 30;
+        config.qualityMinShortEdge = listChoice(prefs.getString("adaptive_quality_min_resolution", "720"),
+                QUALITY_MIN_SHORT_EDGES, 720);
+        config.qualityMinFps = listChoice(prefs.getString("adaptive_quality_min_fps", "30"), QUALITY_MIN_FPS, 30);
         config.thermalProtection = prefs.getBoolean(THERMAL_PROTECTION_PREF_STRING, false);
         dropAutoBitrateLimits(prefs);
         config.autoBitrate = prefs.getBoolean(AutoBitrateChoice.SETTINGS_KEY, false);
@@ -1640,10 +1717,13 @@ public class PreferenceConfiguration {
         config.trackpadSensitivityX = Math.max(-200, Math.min(200, prefs.getInt(TRACKPAD_SENSITIVITY_X_PREF_STRING, DEFAULT_TRACKPAD_SENSITIVITY)));
         config.trackpadSensitivityY = Math.max(-200, Math.min(200, prefs.getInt(TRACKPAD_SENSITIVITY_Y_PREF_STRING, DEFAULT_TRACKPAD_SENSITIVITY)));
         config.trackpadSwapAxis = prefs.getBoolean(TRACKPAD_SWAP_AXIS_PREF_STRING, false);
+        config.nativeTouchpad = prefs.getBoolean(NATIVE_TOUCHPAD_PREF_STRING, false);
         config.trackpadScrollSpeed = Math.max(10, Math.min(300, prefs.getInt(TRACKPAD_SCROLL_SPEED_PREF_STRING, DEFAULT_TRACKPAD_SCROLL_SPEED)));
         config.enableLatencyToast = prefs.getBoolean(LATENCY_TOAST_PREF_STRING, DEFAULT_LATENCY_TOAST);
         config.rustEngine = prefs.getBoolean(RUST_ENGINE_PREF_STRING, true);
-        config.experimentalPacked444 = prefs.getBoolean(PACKED_444_PREF_STRING, false);
+        // Sharper colored text: one choice stored in the two older switches (sharpColor).
+        config.experimentalPacked444 = sharpColor(prefs);
+        config.frameWarp = prefs.getBoolean(FRAME_WARP_PREF_STRING, false);
         config.experimentalChipsetTuning = prefs.getBoolean(CHIPSET_TUNING_PREF_STRING, false);
         config.absoluteMouseMode = prefs.getBoolean(ABSOLUTE_MOUSE_MODE_PREF_STRING, DEFAULT_ABSOLUTE_MOUSE_MODE);
         config.enableAudioFx = prefs.getBoolean(ENABLE_AUDIO_FX_PREF_STRING, DEFAULT_ENABLE_AUDIO_FX);
@@ -1681,10 +1761,12 @@ public class PreferenceConfiguration {
         config.codecDirect = prefs.getBoolean(CODEC_DIRECT_PREF_STRING, context.getResources().getBoolean(com.limelight.R.bool.default_codec_direct));
         config.clientRoaming = prefs.getBoolean(CLIENT_ROAMING_PREF_STRING, true);
         config.roamingMetered = prefs.getBoolean(ROAMING_METERED_PREF_STRING, false);
+        config.receiveCoalescing = prefs.getBoolean(RECEIVE_COALESCING_PREF_STRING, true);
+        config.internetPlay = prefs.getBoolean(INTERNET_PLAY_PREF_STRING, true);
         config.virtualDisplay = prefs.getBoolean(VIRTUAL_DISPLAY_PREF_STRING, false);
         config.virtualDisplayScale = Math.max(50, Math.min(200, prefs.getInt(VIRTUAL_DISPLAY_SCALE_PREF_STRING, 100)));
         config.virtualDisplayDpi = virtualDisplayDpi(prefs.getString(VIRTUAL_DISPLAY_DPI_PREF_STRING, "0"));
-        config.enableYuv444 = prefs.getBoolean(YUV444_PREF_STRING, false);
+        config.enableYuv444 = config.experimentalPacked444;
         // Adaptive refresh needs a screen with ARR; the settings screen greys it elsewhere.
         config.vrr = prefs.getBoolean(VRR_PREF_STRING, false) && com.limelight.binding.video.DisplayFrameRatePolicy.vrrOffered(context);
         config.upscalingMode = UpscalingPolicy.Mode.fromPreference(prefs.getString(UPSCALING_PREF_STRING, "off"));
@@ -1697,7 +1779,9 @@ public class PreferenceConfiguration {
             config.framePacing = FRAME_PACING_MIN_LATENCY;
             config.reduceRefreshRate = false;
         }
-        config.hostFrameTimes = prefs.getBoolean(HOST_FRAME_TIMES_PREF_STRING, false);
+        config.realVrr = prefs.getBoolean(REAL_VRR_PREF_STRING, true);
+        config.gridHostFrameTimes = prefs.getBoolean(HOST_FRAME_TIMES_PREF_STRING, false);
+        config.resolveHostFrameTimes();
         // The vote is for a SurfaceView. It needs the lower refresh rate switch: the settings screen greys it
         // without that, so a stored choice must not act on its own. VRR turns it on: without ARR (known only
         // once the stream's display is) the content rate is the only way down from the panel maximum, to a

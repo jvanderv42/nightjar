@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="title_usb_forwarding">USB デバイスを転送</string>
-    <string name="summary_usb_forwarding">ストリームメニューに USB デバイスを追加します。このデバイスに接続したペンタブレットやセキュリティキーなどを PC で使えるようになります。USB 転送に対応した PC が必要です。</string>
+    <string name="summary_usb_forwarding">ペンタブレットやセキュリティキーなど、このデバイスに接続した USB デバイスを、ストリームメニューから PC に渡せるようにします。USB 転送に対応する PC が必要です。</string>
     <string name="stream_usb_devices">USB デバイス</string>
     <string name="usb_forwarding_pick_title">USB デバイスを転送</string>
+    <string name="usb_forwarding_auto_button">自動</string>
+    <string name="usb_forwarding_auto_title">接続時に常に転送</string>
     <string name="usb_forwarding_none">転送できる USB デバイスがありません。ハブと、このアプリが自分で制御するコントローラーは表示されません。</string>
     <string name="usb_forwarding_detach">%1$s を切断</string>
     <string name="usb_forwarding_asking">%1$s の接続を PC に要求しています…</string>

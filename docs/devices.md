@@ -37,7 +37,7 @@ The text is JSON with these parts:
 | `inputDispatchAgeMs` | Age of touch, mouse and controller events when the app receives them. `null` if you gave no input during the test. |
 | `timerWakeupDelayMs` | How late a 100 ms timer wakes up. High values point to aggressive power saving. |
 
-Each latency metric has `samples`, `mean`, `p95` and `p99` in milliseconds (`p95` is the value the slowest 5% exceed). The latency test measures this device only, without the network, the host or the panel's own delay. For a full stream, use **Measure input latency** and **Why did my stream stutter?** in the stream menu (see [video and latency](video-and-latency.md#device-controls-bitrate-and-diagnostics) and [stream health](stream-health.md)).
+Each latency metric has `samples`, `mean`, `p95` and `p99` in milliseconds (`p95` is the value the slowest 5% exceed). The latency test measures this device only, without the network, the host or the panel's own delay. For a full stream, use **Measure input latency** and **Why did my stream stutter?** in the stream menu (see [video and latency](video-and-latency.md#lower-bitrate-when-the-network-is-busy) and [stream health](stream-health.md)).
 
 ## What is left out
 
@@ -113,7 +113,7 @@ Two third-party reports describe the same problem. The [Moonlight HEVC fix](http
 
 Nightjar sets Android's standard low-latency flag and every vendor low-latency key a decoder declares (Qualcomm, Exynos and Tensor, Kirin, Amlogic, MediaTek Codec2 and NVIDIA keys), plus the MediaTek and Amazon `vdec-lowlatency` option on their older OMX decoders, subject to the [HEVC setting](#hevc-low-latency-compatibility) and the other decoder settings. With **Decoder performance hints** on (the default), Snapdragon decoders (except on Adreno 620 devices), NVIDIA Tegra and MediaTek decoders get the maximum operating rate, and other decoders the realtime priority hint. The decoder benchmark applies the same settings.
 
-**Settings → Advanced → More options → Chipset tuning**, off by default, adds two options on the first configure attempt only: `vdec-lowlatency` on MediaTek `c2.mtk` decoders, and on Exynos decoders the operating rate the decoder declares for the stream size, together with the realtime priority hint. The ideas below need measurements before any further tuning ships:
+**Settings → Advanced → Compatibility → Chipset tuning**, off by default, adds two options on the first configure attempt only: `vdec-lowlatency` on MediaTek `c2.mtk` decoders, and on Exynos decoders the operating rate the decoder declares for the stream size, together with the realtime priority hint. The ideas below need measurements before any further tuning ships:
 
 | Chip family | What to measure | How to tell |
 | --- | --- | --- |

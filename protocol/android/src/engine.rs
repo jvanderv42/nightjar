@@ -136,6 +136,8 @@ pub struct StartParams {
     /// "Video data straight to the decoder": MediaCodec frames go to Java in place
     /// ([`crate::renderers::Video`]), unless `debug.nightjar.codec_direct` says otherwise.
     pub codec_direct: bool,
+    /// The host takes controller identities and the C button (`ControllerIdentityVersion`).
+    pub controller_identity: bool,
 }
 
 /// Builds the stream as `callbacks.c` fills STREAM_CONFIGURATION.
@@ -197,8 +199,11 @@ pub fn start(bridge: &'static Bridge, params: StartParams) -> i32 {
     ENGINE.host_packed444_modes.store(-1, Ordering::SeqCst);
     ENGINE.announced_hdr_format.store(0, Ordering::SeqCst);
     *lock(&ENGINE.clipboard) = None;
+    // Before the session starts: the renderers ask for it as the video starts.
+    crate::frame_warp::begin(params.config.frame_warp.clone());
 
     let microphone_requested = params.config.stream.microphone;
+    let controller_identity = params.controller_identity;
     let audio_passthrough = params.config.stream.audio_passthrough;
     let events = Arc::new(Events::new(bridge));
     platform::info(&format!(
@@ -225,6 +230,7 @@ pub fn start(bridge: &'static Bridge, params: StartParams) -> i32 {
         Err(error) => {
             platform::error(&format!("Stream start failed: {error}"));
             set_host_messages(&[]);
+            crate::frame_warp::end();
             bridge.with_env(|env| {
                 let message = env.new_string(format!("Stream start failed: {error}"))?;
                 bridge.void(
@@ -276,9 +282,12 @@ pub fn start(bridge: &'static Bridge, params: StartParams) -> i32 {
     ENGINE
         .microphone_state
         .store(microphone_state, Ordering::SeqCst);
+    // Before the session is published: no controller arrives before the queue knows.
+    session.input(|q| q.set_controller_identity(controller_identity));
     let id = ENGINE.sessions.fetch_add(1, Ordering::SeqCst) + 1;
     *lock(&ENGINE.video_gauges) = session.video_gauges();
     *lock(&ENGINE.session) = Some((id, session));
+    crate::frame_warp::after_start();
     if events.started.load(Ordering::SeqCst) {
         bridge.post(bridge.m.connection_started, &[]);
     }
@@ -291,6 +300,7 @@ pub fn stop() {
     *lock(&ENGINE.video_gauges) = None;
     *lock(&ENGINE.clipboard) = None;
     set_host_messages(&[]);
+    crate::frame_warp::end();
     ENGINE.host_packed444_modes.store(-1, Ordering::SeqCst);
     ENGINE.announced_hdr_format.store(0, Ordering::SeqCst);
     if let Some(microphone) = lock(&ENGINE.microphone).take() {
@@ -442,11 +452,12 @@ pub fn send_microphone(pcm: &[i16]) -> i32 {
     }
 }
 
-pub fn present_clock_start(min_interval_us: i32) {
-    let settings = Settings {
-        min_interval_us: i64::from(min_interval_us.max(0)),
-        ..Settings::default()
-    };
+/// `adaptive`: the display refreshes when a frame comes (adaptive refresh rate), so a frame much
+/// later than the typical one is shown when ready instead of every frame waiting for it
+/// ([`Settings::adaptive`]); on a fixed vsync grid the percentile rule stays as it is.
+pub fn present_clock_start(min_interval_us: i32, adaptive: bool) {
+    let min_interval_us = i64::from(min_interval_us.max(0));
+    let settings = if adaptive { Settings::adaptive(min_interval_us) } else { Settings { min_interval_us, ..Settings::default() } };
     *lock(&ENGINE.present_clock) = Some(PresentClock::new(settings));
 }
 
@@ -592,12 +603,18 @@ pub fn clock_sync(reply: &ClockSyncReply, received_us: u64) {
     }
 }
 
+/// The tests that share the engine's global state (here and in `frame_warp`) run one at a time.
+#[cfg(test)]
+static ENGINE_TESTS: Mutex<()> = Mutex::new(());
+
+#[cfg(test)]
+pub(crate) fn tests_serial() -> MutexGuard<'static, ()> {
+    lock(&ENGINE_TESTS)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The tests below share the engine's global state.
-    static ENGINE_TESTS: Mutex<()> = Mutex::new(());
 
     #[test]
     fn an_interrupted_start_leaves_no_host_messages_behind() {
@@ -749,7 +766,7 @@ mod tests {
     fn present_clock_offset_waits_for_a_clock_sync_exchange() {
         let _serial = lock(&ENGINE_TESTS);
         assert_eq!(present_clock_offset(1_000), None, "no clock running");
-        present_clock_start(0);
+        present_clock_start(0, false);
         assert_eq!(present_clock_offset(1_000), None, "no exchange yet");
         // client = host + offset: sent at 1000, answered at 1100, the host at 5000 and 5010.
         clock_sync(
@@ -767,12 +784,23 @@ mod tests {
     }
 
     #[test]
+    fn an_adaptive_display_bounds_the_wait_for_late_frames_and_a_grid_does_not() {
+        let _serial = lock(&ENGINE_TESTS);
+        present_clock_start(8_333, true);
+        let spread = |clock: &Option<PresentClock>| clock.as_ref().map(|c| (c.settings.max_spread_us, c.settings.min_interval_us));
+        assert_eq!(spread(&lock(&ENGINE.present_clock)), Some((Some(rubylight_protocol::present_clock::ADAPTIVE_SPREAD_US), 8_333)));
+        present_clock_start(8_333, false);
+        assert_eq!(spread(&lock(&ENGINE.present_clock)), Some((None, 8_333)));
+        present_clock_stop();
+    }
+
+    #[test]
     fn the_engine_clock_schedules_on_a_grid_and_follows_the_content_rate() {
         let _serial = lock(&ENGINE_TESTS);
         let grid = Grid { anchor_us: 0, interval_us: 16_667, lead_us: 4_000, slack_us: 0 };
         assert_eq!(present_clock_schedule_on_grid(0, 1_000, grid), None, "no clock running");
         assert_eq!(present_clock_content_rate(), 0);
-        present_clock_start(0);
+        present_clock_start(0, false);
         let s = present_clock_schedule_on_grid(0, 1_000_000, grid).expect("scheduled");
         assert!(s.vsync_us >= 1_000_000 && s.release_us >= 1_000_000);
         for i in 0..400u32 {

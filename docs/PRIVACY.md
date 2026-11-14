@@ -51,6 +51,11 @@ that PC only. It is not recorded or stored on your device, and it stops when you
 mute it in the stream menu or the stream ends. Pairing exchanges identity
 information with that PC. Host discovery also uses your local network.
 
+**Guests.** On a PC that offers guests, the device playing reads every few
+seconds during a stream which devices joined its game or want to; their device
+names come from the PC and stay in memory for the stream. A device that joins
+as a guest sees and hears everything the stream shows.
+
 **Scan QR code** in Add PC asks for camera access only when you tap it. The
 camera reads the pairing code on your PC's screen; no picture is saved or
 sent. Without the access, type the PC's address instead.
@@ -87,10 +92,29 @@ identifier to recognize this installation across requests.
 
 The app also makes public network checks. It can contact
 `stun.moonlight-stream.org` to find an external network address and
-`android.conntest.moonlight-stream.org` to diagnose connection failures. Those
-servers receive your public IP address and network protocol traffic. They do
-not receive your stream, clipboard or problem reports. Their operators'
-retention practices apply.
+Moonlight's port-test server `android.conntest.moonlight-stream.org` to
+diagnose connection failures. The port test runs when you choose **Test the
+network** on the screen of a stream that could not start, and by itself after
+some failed connections, such as a stream that stops or cannot start or a PC
+you add by address that cannot be reached. It never runs during a stream.
+Those servers receive your public IP address and network protocol traffic.
+They do not receive your stream, clipboard or problem reports. Their
+operators' retention practices apply.
+
+**Play over the internet** (on by default, Settings → Streaming → Connection)
+acts only for a PC that offers it and that gave this device its key while you
+were on its network. When neither the local network, the PC's IPv6 address nor
+a forwarded port answers, Nightjar asks `stun.moonlight-stream.org` and
+`stun.cloudflare.com` for this device's public address and meets the PC
+through the Mainline DHT, a public peer-to-peer directory that BitTorrent apps
+also use (joined through `router.bittorrent.com`, `dht.transmissionbt.com`,
+`router.utorrent.com` and `dht.libtorrent.org`). Nightjar only reads and
+leaves encrypted notes there; nothing is downloaded or shared through it.
+Directory nodes, run by anyone, see your public IP address and store notes
+encrypted with keys only this device and the PC hold; they cannot read them or
+link them to you, the PC or another hour. The stream then goes directly
+between this device and the PC, sealed with those keys. No server of the
+Nightjar project is involved. Turn the setting off to never contact them.
 
 Opening a help or source link contacts the website you choose to visit. The
 site and your browser apply their own privacy practices.
@@ -159,14 +183,20 @@ traffic and the microphone go only between this computer and the PC you
 stream from, as on Android. Apart from your PCs, the desktop client contacts:
 
 - `api.github.com` on Windows and in the AppImage, once per launch, to check
-  for a newer Nightjar release when **Check for updates** is on. Nothing is
-  downloaded until you choose **Update now**, which fetches the release from
+  for a newer Nightjar release when **Check for updates automatically** is on,
+  and once each time you choose **Check now** under **Check for updates now**.
+  Nothing is downloaded until you choose **Update now**, which fetches the release from
   `github.com` and GitHub's asset storage (`release-assets.githubusercontent.com`,
   `objects.githubusercontent.com`).
 - `stun.moonlight-stream.org` to learn this network's public IPv4 address, so
   a PC on your home network can be reached from outside it.
+- `qt.conntest.moonlight-stream.org`, Moonlight's port-test server, only when
+  you choose **Test the network** on the card of a stream that could not
+  start; never during a stream. It tries TCP ports 47984, 47989 and 48010 and
+  UDP ports 47998 to 48000 and 48010, after port 443 as a reference, to tell
+  whether a firewall blocks streaming.
 
-Both receive your public IP address. To remove the desktop client's data on
+All three receive your public IP address. To remove the desktop client's data on
 Windows, choose "Remove them too" in the uninstaller: it deletes everything in
 `%APPDATA%\Nightjar\config` except the `screenshots` and `statistics`
 folders, which hold your own files; delete those yourself. On Linux, delete

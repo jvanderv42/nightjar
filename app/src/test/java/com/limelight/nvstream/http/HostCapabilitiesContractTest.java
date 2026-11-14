@@ -67,6 +67,7 @@ public class HostCapabilitiesContractTest {
             case HOST_TIMING: return "host_timing";
             case WEB_UI: return "web_ui";
             case CURSOR_SHAPE: return "cursor_shape";
+            case FRAME_WARP: return "frame_warp";
             case NATIVE_API: return "native_api";
             case SLEEP: return "sleep";
             case FILE_UPLOAD: return "file_upload";
@@ -81,8 +82,10 @@ public class HostCapabilitiesContractTest {
             case TEXT_INPUT: return "text_input";
             case CLIENT_KEYBOARD_LAYOUT: return "client_keyboard_layout";
             case PEN_BARREL_ROLL: return "pen_barrel_roll";
+            case CONTROLLER_IDENTITY: return "controller_identity";
             case PIPELINE_RATES: return "pipeline_rates";
             case SECOND_SCREEN: return "second_screen";
+            case INTERNET_PLAY: return "internet_play";
             case IMAGE_CLIPBOARD: return "image_clipboard";
             case SHARED_FOLDERS: return "shared_folders";
             case COOP: return "coop";

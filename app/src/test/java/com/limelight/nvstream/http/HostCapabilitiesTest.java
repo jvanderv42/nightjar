@@ -154,18 +154,19 @@ public class HostCapabilitiesTest {
     }
 
     @Test
-    public void currentRubylightSupportsEverythingButCursorShapesTheNativeApiSleepAndFiles() {
+    public void currentRubylightSupportsEverythingButCursorShapesFrameWarpTheNativeApiSleepAndFiles() {
         HostCapabilities caps = TestHosts.rubylight();
         assertEquals(Family.RUBYLIGHT, caps.family());
         assertEquals("2.2.21", caps.hostVersion());
         // Everything up to file transfer; the 3.0 extensions came later.
         Set<Feature> expected = EnumSet.range(PERMISSIONS, FILE_DOWNLOAD);
-        expected.removeAll(EnumSet.of(DISPLAY_SCALE, CURSOR_SHAPE, NATIVE_API, SLEEP, FILE_UPLOAD, FILE_DOWNLOAD));
+        expected.removeAll(EnumSet.of(DISPLAY_SCALE, CURSOR_SHAPE, FRAME_WARP, NATIVE_API, SLEEP, FILE_UPLOAD,
+                FILE_DOWNLOAD));
         assertEquals(expected, caps.supported());
         assertReason(caps, DISPLAY_SCALE, Reason.UPDATE_HOST);
         assertNever(caps, DOLBY_VISION, HLG, CLIENT_FEC, BANDWIDTH_PROBE, AUDIO_PASSTHROUGH, SURROUND_714, TEXT_INPUT,
                 CLIENT_KEYBOARD_LAYOUT, PEN_BARREL_ROLL, PIPELINE_RATES);
-        assertNever(caps, CURSOR_SHAPE);
+        assertNever(caps, CURSOR_SHAPE, FRAME_WARP);
         assertReason(caps, NATIVE_API, Reason.UPDATE_HOST);
         assertReason(caps, SLEEP, Reason.UPDATE_HOST);
         // File transfer rides on the native API, which this version lacks.
@@ -378,6 +379,35 @@ public class HostCapabilitiesTest {
         assertFalse(older.has(CURSOR_SHAPE));
     }
 
+    @Test
+    public void frameWarpNeedsItsVersionFieldFromAnyHost() {
+        for (String host : new String[] {"<appversion>7.1.431.-1</appversion>", "<Permission>0</Permission>",
+                "<FrameLimiterSupported>1</FrameLimiterSupported>", "<RustHostVersion>2.2.21</RustHostVersion>",
+                "<appversion>7.1.431.0</appversion>"}) {
+            assertTrue(host, caps(host + "<FrameWarpVersion>1</FrameWarpVersion>").has(FRAME_WARP));
+            assertTrue(host, caps(host + "<FrameWarpVersion>2</FrameWarpVersion>").has(FRAME_WARP));
+            for (String version : new String[] {"0", "-1", "bad", "", "65536"}) {
+                assertFalse(host + " " + version, caps(host + "<FrameWarpVersion>" + version +
+                        "</FrameWarpVersion>").has(FRAME_WARP));
+            }
+            // Cursor shapes and Frame Warp are separate fields.
+            assertFalse(host, caps(host + "<CursorShapeVersion>1</CursorShapeVersion>").has(FRAME_WARP));
+        }
+        assertNever(caps("<appversion>7.1.431.-1</appversion>"), FRAME_WARP);
+        assertUnknown(caps("<appversion>7.1.431.0</appversion>"), FRAME_WARP);
+        HostCapabilities stored = caps("<RustHostVersion>2.2.21</RustHostVersion><FrameWarpVersion>1</FrameWarpVersion>");
+        assertEquals(stored, HostCapabilities.fromJson(stored.toJson()));
+        assertTrue(HostCapabilities.fromJson(stored.toJson()).has(FRAME_WARP));
+        assertNotEquals(stored, caps("<RustHostVersion>2.2.21</RustHostVersion>"));
+        // Capabilities stored before the field existed still load, without Frame Warp.
+        String olderJson = TestHosts.rubylight().toJson().replace(",\"frameWarpVersion\":-1", "")
+                .replace("\"frameWarpVersion\":-1,", "");
+        assertFalse(olderJson, olderJson.contains("frameWarpVersion"));
+        HostCapabilities older = HostCapabilities.fromJson(olderJson);
+        assertTrue(older.isKnown());
+        assertFalse(older.has(FRAME_WARP));
+    }
+
     /**
      * Each 3.0 extension follows its own serverinfo field. The cases are this test's own; the shared contract
      * fixtures (HostCapabilitiesContractTest) are what holds the Java and Rust parsers to the same answers.
@@ -396,6 +426,7 @@ public class HostCapabilitiesTest {
                 {"TextInputVersion", TEXT_INPUT, new String[] {"1"}, new String[] {"0"}},
                 {"KeyboardLayoutVersion", CLIENT_KEYBOARD_LAYOUT, new String[] {"1"}, new String[] {"0"}},
                 {"PenBarrelRollVersion", PEN_BARREL_ROLL, new String[] {"1"}, new String[] {"65536"}},
+                {"ControllerIdentityVersion", CONTROLLER_IDENTITY, new String[] {"1"}, new String[] {"65536"}},
                 {"PipelineRatesVersion", PIPELINE_RATES, new String[] {"1"}, new String[] {""}},
         };
         for (Object[] row : cases) {
@@ -591,6 +622,16 @@ public class HostCapabilitiesTest {
     }
 
     @Test
+    public void playOverTheInternetNeedsTheHostToHaveItOn() {
+        assertTrue(caps("<RustHostInternetPlayVersion>1</RustHostInternetPlayVersion>").has(Feature.INTERNET_PLAY));
+        for (String version : new String[] {"", "<RustHostInternetPlayVersion>0</RustHostInternetPlayVersion>"}) {
+            assertFalse(version, caps(version).has(Feature.INTERNET_PLAY));
+        }
+        assertTrue(HostCapabilities.fromJson(
+                caps("<RustHostInternetPlayVersion>1</RustHostInternetPlayVersion>").toJson()).has(Feature.INTERNET_PLAY));
+    }
+
+    @Test
     public void aSecondScreenOfOneDeviceNeedsSecondScreenVersion() {
         String host = "<RustHostVersion>3.9.0</RustHostVersion>";
         // Older hosts don't send it and end the first stream when the second starts.
@@ -606,6 +647,28 @@ public class HostCapabilitiesTest {
         // It survives the cache the second stream's process reads.
         assertTrue(HostCapabilities.fromJson(
                 caps(host + "<SecondScreenVersion>1</SecondScreenVersion>").toJson()).has(Feature.SECOND_SCREEN));
+    }
+
+    @Test
+    public void imageEnhancementChoicesGoOnlyForWhatTheHostOffers() {
+        String host = "<RustHostVersion>4.2.0</RustHostVersion>";
+        HostCapabilities none = caps(host);
+        assertEquals(0, none.nvidiaEnhancements());
+        assertEquals("", none.enhancementParameters(true, false));
+        HostCapabilities video = caps(host + "<NvidiaEnhancements>2</NvidiaEnhancements>");
+        assertFalse(video.offersEnhancement(HostCapabilities.RTX_HDR));
+        assertTrue(video.offersEnhancement(HostCapabilities.RTX_VIDEO));
+        assertEquals("&rlRtxVideo=0", video.enhancementParameters(true, false));
+        HostCapabilities both = caps(host + "<NvidiaEnhancements>3</NvidiaEnhancements>");
+        assertEquals("&rlRtxHdr=1&rlRtxVideo=0", both.enhancementParameters(true, false));
+        // Following the app sends nothing.
+        assertEquals("", both.enhancementParameters(null, null));
+        // Unknown bits and junk read as nothing more, as the shared Rust parser reads them.
+        assertEquals(3, caps(host + "<NvidiaEnhancements>255</NvidiaEnhancements>").nvidiaEnhancements());
+        assertEquals(0, caps(host + "<NvidiaEnhancements>x</NvidiaEnhancements>").nvidiaEnhancements());
+        assertEquals(0, caps(host + "<NvidiaEnhancements>-1</NvidiaEnhancements>").nvidiaEnhancements());
+        // It survives the capability cache.
+        assertEquals(3, HostCapabilities.fromJson(both.toJson()).nvidiaEnhancements());
     }
 
     @Test
@@ -667,11 +730,11 @@ public class HostCapabilitiesTest {
     public void familyLabelsNameTheHostOnlyForIdentification() {
         Context context = RuntimeEnvironment.getApplication();
         assertEquals("Rubylight 2.2.21", TestHosts.rubylight().familyLabel(context));
-        assertEquals("Apollo-compatible host", TestHosts.fixture("apollo-serverinfo.xml").familyLabel(context));
-        assertEquals("Vibepollo-compatible host", TestHosts.fixture("vibepollo-serverinfo.xml").familyLabel(context));
-        assertEquals("Sunshine-compatible host", TestHosts.fixture("sunshine-serverinfo.xml").familyLabel(context));
+        assertEquals("Apollo-compatible streaming app", TestHosts.fixture("apollo-serverinfo.xml").familyLabel(context));
+        assertEquals("Vibepollo-compatible streaming app", TestHosts.fixture("vibepollo-serverinfo.xml").familyLabel(context));
+        assertEquals("Sunshine-compatible streaming app", TestHosts.fixture("sunshine-serverinfo.xml").familyLabel(context));
         assertEquals("NVIDIA GameStream", TestHosts.fixture("gamestream-serverinfo.xml").familyLabel(context));
-        assertEquals("Moonlight-compatible host", HostCapabilities.UNKNOWN.familyLabel(context));
+        assertEquals("Moonlight-compatible streaming app", HostCapabilities.UNKNOWN.familyLabel(context));
     }
 
     @Test

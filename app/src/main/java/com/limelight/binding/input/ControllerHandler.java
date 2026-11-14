@@ -46,6 +46,7 @@ import com.limelight.binding.input.driver.UsbDriverService;
 import com.limelight.binding.input.keyboard.KeyboardFocus;
 import com.limelight.binding.input.keyboard.PcKeyboardController;
 import com.limelight.nvstream.NvConnection;
+import com.limelight.binding.input.virtual_controller.SteamControls;
 import com.limelight.nvstream.input.ControllerPacket;
 import com.limelight.nvstream.input.MouseButtonPacket;
 import com.limelight.nvstream.jni.MoonBridge;
@@ -185,6 +186,12 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
      * above: the stream menu's on and off must not renumber pads mid-game.
      */
     private final boolean onscreenOwnPlayerSession;
+    /**
+     * Whether the on-screen controls have the Steam Controller controls this session, fixed at
+     * launch like {@link #touchpadButtonSession}: their pad arrives with a touchpad, grip and stick
+     * touch, and the back buttons.
+     */
+    private final boolean steamControlsSession;
     /** The slot whose pad may use this device's motors and sensors: the first one a pad can have. */
     private final short deviceFallbackSlot;
     /**
@@ -204,6 +211,8 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         this.prefConfig = prefConfig;
         this.touchpadButtonSession = prefConfig.showTouchpadButton && !prefConfig.onlyL3R3;
         this.onscreenOwnPlayerSession = onscreenOwnsPlayerOne(prefConfig);
+        // Both on-screen controller styles offer the Steam Controller controls.
+        this.steamControlsSession = prefConfig.oscSteamControls;
         this.deviceFallbackSlot = (short) (onscreenOwnPlayerSession ? 1 : 0);
         this.rumbleAllowed = RumblePolicy.allows(prefConfig.disableRumble);
 		
@@ -1735,7 +1744,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
      */
     private boolean announcesOnscreenPad() {
         if (onscreenOwnPlayerSession) return true;
-        if (!showsTouchpadButton()) return false;
+        if (!showsTouchpadButton() && !steamControlsSession) return false;
         for (InputDeviceContext context : inputDeviceContexts.values()) {
             if (context.assignedControllerNumber && context.controllerNumber == 0) return false;
         }
@@ -1747,7 +1756,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
 
     private void sendOnscreenPadArrival() {
         conn.sendControllerArrivalEvent((byte) 0, getActiveControllerMask(), onscreenPadType(),
-                onscreenPadButtons(), (short) 0);
+                onscreenPadButtons(), onscreenPadCapabilities(steamControlsSession));
     }
 
     // Its own player without the Touchpad button: the host's default pad, announced for its number.
@@ -1756,7 +1765,40 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     }
 
     private int onscreenPadButtons() {
-        return showsTouchpadButton() ? ONSCREEN_PAD_BUTTONS : ONSCREEN_PAD_BUTTONS & ~ControllerPacket.TOUCHPAD_FLAG;
+        return onscreenPadButtons(showsTouchpadButton(), steamControlsSession);
+    }
+
+    /** The on-screen controller's buttons for its arrival: the Touchpad button and the back buttons with their settings. */
+    static int onscreenPadButtons(boolean touchpadButton, boolean steamControls) {
+        int buttons = touchpadButton ? ONSCREEN_PAD_BUTTONS : ONSCREEN_PAD_BUTTONS & ~ControllerPacket.TOUCHPAD_FLAG;
+        return steamControls ? buttons | SteamControls.BUTTONS : buttons;
+    }
+
+    /** The on-screen controller's capabilities for its arrival: none but the Steam Controller controls'. */
+    static short onscreenPadCapabilities(boolean steamControls) {
+        return steamControls ? SteamControls.CAPABILITIES : 0;
+    }
+
+    /**
+     * Whether a pad in this slot carries the on-screen Steam Controller controls in its arrival:
+     * player 1's, when the on-screen controls share it rather than being their own player.
+     */
+    static boolean carriesSteamControls(boolean steamControls, boolean onscreenOwnPlayer, short controllerNumber) {
+        return steamControls && !onscreenOwnPlayer && controllerNumber == 0;
+    }
+
+    private boolean carriesSteamControls(short controllerNumber) {
+        return carriesSteamControls(steamControlsSession, onscreenOwnPlayerSession, controllerNumber);
+    }
+
+    /** A pad's arrival capabilities with the on-screen Steam Controller controls it carries; a pin to Xbox still drops the touchpad. */
+    private short withSteamControls(short controllerNumber, short capabilities, ControllerButtonMap map) {
+        if (!carriesSteamControls(controllerNumber)) return capabilities;
+        return arrivalCapabilities((short) (capabilities | SteamControls.CAPABILITIES), map);
+    }
+
+    private int withSteamControlButtons(short controllerNumber, int buttons) {
+        return carriesSteamControls(controllerNumber) ? buttons | SteamControls.BUTTONS : buttons;
     }
 
     private synchronized short getActiveControllerMask() {
@@ -2027,6 +2069,8 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     }
 
     private void sendControllerInputPacket(GenericControllerContext originalContext) {
+        // Controllers set to Off: no physical controller reaches the PC (the on-screen gamepad still does).
+        if (!prefConfig.sendControllers) return;
         assignControllerNumberIfNeeded(originalContext);
         if (!originalContext.assignedControllerNumber) {
             return;
@@ -3148,11 +3192,13 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 short caps = context.capabilities();
                 if (!prefConfig.gamepadMotionSensors) caps &= ~(MoonBridge.LI_CCAP_ACCEL | MoonBridge.LI_CCAP_GYRO);
                 controllers[context.controllerNumber] = launchController(context.controllerNumber,
-                        context.arrivalType(), caps,
-                        context.device.getSupportedButtonFlags() | context.buttonMap.targetButtonFlags());
+                        context.arrivalType(), withSteamControls(context.controllerNumber, caps, context.buttonMap),
+                        withSteamControlButtons(context.controllerNumber,
+                                context.device.getSupportedButtonFlags() | context.buttonMap.targetButtonFlags()));
             }
             if (controllers[0] == null && announcesOnscreenPad()) {
-                controllers[0] = launchController((short) 0, onscreenPadType(), (short) 0, onscreenPadButtons());
+                controllers[0] = launchController((short) 0, onscreenPadType(),
+                        onscreenPadCapabilities(steamControlsSession), onscreenPadButtons());
             }
             StringBuilder result = new StringBuilder();
             for (String controller : controllers) {
@@ -3320,10 +3366,19 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         context.enableSensorRunnable.run();
     }
 
+    // Motion profile is fixed per listener; device fallback sensors keep identity mapping.
+    private GyroAxisTransformer controllerGyroTransformer(InputDeviceContext sensorOwner) {
+        return sensorOwner != null && sensorOwner.sensorManager != deviceSensorManager
+                ? GyroMappingPreferences.transformer(activityContext, sensorOwner.inputDevice)
+                : GyroAxisTransformer.identity();
+    }
+
     private MotionListener createSensorListener(final short controllerNumber, final byte motionType,
                                                 final boolean needsDeviceOrientationCorrection,
-                                                final InputDeviceContext livenessContext) {
-        return new MotionListener(controllerNumber, motionType, needsDeviceOrientationCorrection, livenessContext);
+                                                final InputDeviceContext livenessContext,
+                                                final InputDeviceContext sensorOwner) {
+        return new MotionListener(controllerNumber, motionType, needsDeviceOrientationCorrection,
+                livenessContext, sensorOwner);
     }
 
     /**
@@ -3336,6 +3391,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         private final byte motionType;
         private final boolean needsDeviceOrientationCorrection;
         private final InputDeviceContext livenessContext;
+        private final GyroAxisTransformer profileTransformer;
         // Only the thread delivering the events reads and writes these.
         private final float[] lastValues = new float[3];
         private final GyroLivenessTracker liveness;
@@ -3345,11 +3401,12 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         boolean holdsRotation;
 
         MotionListener(short controllerNumber, byte motionType, boolean needsDeviceOrientationCorrection,
-                       InputDeviceContext livenessContext) {
+                       InputDeviceContext livenessContext, InputDeviceContext sensorOwner) {
             this.controllerNumber = controllerNumber;
             this.motionType = motionType;
             this.needsDeviceOrientationCorrection = needsDeviceOrientationCorrection;
             this.livenessContext = livenessContext;
+            this.profileTransformer = controllerGyroTransformer(sensorOwner);
             this.liveness = livenessContext != null ? new GyroLivenessTracker() : null;
         }
 
@@ -3425,12 +3482,20 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                     return;
                 }
                 if (motionType == MoonBridge.LI_MOTION_TYPE_GYRO) {
-                    // Convert from rad/s to deg/s
+                    float[] corrected = (GyroDiagnosticOverlay.isFlydigiCandidateEnabled()
+                            ? new GyroAxisTransformer(1, 2, 0, -1, 1, 1)
+                            : profileTransformer).transform(
+                            sensorEvent.values[x] * xFactor,
+                            sensorEvent.values[y] * yFactor,
+                            sensorEvent.values[z] * zFactor);
+                    GyroDiagnosticOverlay.report("sensor", controllerNumber, motionType,
+                            corrected[0] * 57.2957795f, corrected[1] * 57.2957795f,
+                            corrected[2] * 57.2957795f);
                     conn.sendControllerMotionEvent((byte) controllerNumber,
                             motionType,
-                            sensorEvent.values[x] * xFactor * 57.2957795f,
-                            sensorEvent.values[y] * yFactor * 57.2957795f,
-                            sensorEvent.values[z] * zFactor * 57.2957795f);
+                            corrected[0] * 57.2957795f,
+                            corrected[1] * 57.2957795f,
+                            corrected[2] * 57.2957795f);
                 }
                 else {
                     // Pass m/s^2 directly without conversion
@@ -3506,7 +3571,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                         // Enable the accelerometer if requested
                         Sensor accelSensor = sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
                         if (sensorsEnabled && reportRateHz != 0 && accelSensor != null) {
-                            deviceContext.accelListener = createSensorListener(controllerNumber, motionType, sm == deviceSensorManager, null);
+                            deviceContext.accelListener = createSensorListener(controllerNumber, motionType, sm == deviceSensorManager, null, deviceContext);
                             registerMotionListener(sm, accelSensor, deviceContext.accelListener, 1000000 / reportRateHz);
                         }
                         break;
@@ -3520,7 +3585,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                         Sensor gyroSensor = sm.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
                         if (sensorsEnabled && reportRateHz != 0 && gyroSensor != null) {
                             deviceContext.gyroListener = createSensorListener(controllerNumber, motionType, sm == deviceSensorManager,
-                                    checksGyroLiveness(controllerNumber, sm) ? deviceContext : null);
+                                    checksGyroLiveness(controllerNumber, sm) ? deviceContext : null, deviceContext);
                             registerMotionListener(sm, gyroSensor, deviceContext.gyroListener, 1000000 / reportRateHz);
                         }
                         break;
@@ -4257,6 +4322,17 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     }
 
     /**
+     * A finger on one of the on-screen Steam Controller trackpads: touchpad 0 of the on-screen
+     * controls' pad, which a PC with the Steam Controller type splits into its two pads.
+     */
+    public void reportOscTouch(byte eventType, int pointerId, float x, float y, float pressure) {
+        if (stopped || !prefConfig.sendControllers) {
+            return;
+        }
+        conn.sendControllerTouchEvent((byte) defaultContext.controllerNumber, eventType, pointerId, x, y, pressure);
+    }
+
+    /**
      * The gamepad controls of the per-game touch layout. They join controller 1 the way the fixed
      * on-screen gamepad does, fused with it and with any pad sharing the slot.
      */
@@ -4563,7 +4639,14 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         UsbDeviceContext context = usbDeviceContexts.get(controllerId);
         if (!stopped && inputEnabled && sensorsEnabled && prefConfig.gamepadMotionSensors && context != null &&
                 context.assignedControllerNumber && !dropsMotionAndTouchpad(context.buttonMap)) {
-            conn.sendControllerMotionEvent((byte)context.controllerNumber, motionType, x, y, z);
+            float[] corrected = motionType == MoonBridge.LI_MOTION_TYPE_GYRO
+                    && GyroDiagnosticOverlay.isFlydigiCandidateEnabled()
+                    ? new GyroAxisTransformer(1, 2, 0, -1, 1, 1).transform(x, y, z)
+                    : new float[] {x, y, z};
+            GyroDiagnosticOverlay.report("usb", context.controllerNumber, motionType,
+                    corrected[0], corrected[1], corrected[2]);
+            conn.sendControllerMotionEvent((byte)context.controllerNumber, motionType,
+                    corrected[0], corrected[1], corrected[2]);
         }
     }
 
@@ -5072,10 +5155,16 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             }
 
             capabilities = arrivalCapabilities(capabilities, buttonMap);
+            // The on-screen Steam Controller controls sharing this pad's slot.
+            capabilities = withSteamControls((short) controllerNumber, capabilities, buttonMap);
+            supportedButtonFlags = withSteamControlButtons((short) controllerNumber, supportedButtonFlags);
             reportedCapabilities = capabilities;
             // A built-in device sharing player 1 with an external pad stays quiet, so the host
             // keeps the external pad's type, touchpad and motion.
             if (!external && sharesSlotWithExternalPad(this)) return;
+            if (!prefConfig.sendControllers) return;
+            // Which controller it is goes first, so the host can choose its pad on arrival.
+            conn.sendControllerIdentityEvent((byte)controllerNumber, vendorId, productId);
             conn.sendControllerArrivalEvent((byte)controllerNumber, getActiveControllerMask(),
                     reportedType, supportedButtonFlags, capabilities);
 
@@ -5231,7 +5320,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             short rate = gyro ? gyroReportRateHz : accelReportRateHz;
             Sensor sensor = deviceSensors.getDefaultSensor(gyro ? Sensor.TYPE_GYROSCOPE : Sensor.TYPE_ACCELEROMETER);
             if (!stopped && sensorsEnabled && rate != 0 && sensor != null) {
-                listener = createSensorListener(controllerNumber, motionType, true, null);
+                listener = createSensorListener(controllerNumber, motionType, true, null, null);
                 registerMotionListener(deviceSensors, sensor, listener, 1000000 / rate);
             }
             if (gyro) gyroListener = listener;
@@ -5312,8 +5401,12 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 capabilities &= ~(MoonBridge.LI_CCAP_ACCEL | MoonBridge.LI_CCAP_GYRO);
             }
             byte type = arrivalType();
+            if (!prefConfig.sendControllers) return;
+            conn.sendControllerIdentityEvent((byte)controllerNumber, vendorId, productId);
             int result = conn.sendControllerArrivalEvent((byte)controllerNumber, getActiveControllerMask(),
-                    type, device.getSupportedButtonFlags() | buttonMap.targetButtonFlags(), capabilities);
+                    type, withSteamControlButtons((short) controllerNumber,
+                            device.getSupportedButtonFlags() | buttonMap.targetButtonFlags()),
+                    withSteamControls((short) controllerNumber, capabilities, buttonMap));
             if (result != 0) {
                 if (!arrivalPending) {
                     LimeLog.warning("USB controller announcement deferred: slot=" + controllerNumber + ", rc=" + result);

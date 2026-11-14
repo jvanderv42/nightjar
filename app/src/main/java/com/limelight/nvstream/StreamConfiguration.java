@@ -27,6 +27,9 @@ public class StreamConfiguration {
     private int virtualDisplayScale = 100;
     // The virtual display's Windows scale (rlDisplayScale); 0 keeps the PC's own.
     private int virtualDisplayDpi;
+    // RTX HDR and RTX Video enhancement for this stream (rlRtxHdr, rlRtxVideo); null follows the PC's app setting.
+    private Boolean rtxHdr;
+    private Boolean rtxVideo;
     private boolean vrr;
     // Asks a Rubylight PC for clipboard sync (0x5508).
     private boolean clipboardSync;
@@ -52,8 +55,13 @@ public class StreamConfiguration {
     private int supportedVideoFormats;
     // The 10-bit formats offered are for 10-bit SDR, not HDR: the launch does not ask for HDR.
     private boolean sdr10Bit;
-    // Packed 4:4:4 as this session uses it (off for a session reconnected after the GPU path failed).
+    // Packed 4:4:4 as this session may use it (off for a session reconnected after the GPU path failed);
+    // NvConnection decides before the launch whether it does (SharpColor).
     private boolean packed444;
+    // Sharper colored text is Automatic: NvConnection picks native 4:4:4, packed or neither (SharpColor).
+    private boolean sharpColor;
+    // PyroWave is the chosen codec, whose 4:4:4 is its own.
+    private boolean pyroWaveChosen;
     private int attachedGamepadMask;
     private int colorRange;
     private int colorSpace;
@@ -217,6 +225,12 @@ public class StreamConfiguration {
             return this;
         }
 
+        public StreamConfiguration.Builder setImageEnhancements(Boolean rtxHdr, Boolean rtxVideo) {
+            config.rtxHdr = rtxHdr;
+            config.rtxVideo = rtxVideo;
+            return this;
+        }
+
         public StreamConfiguration.Builder setVrr(boolean enabled) {
             config.vrr = enabled;
             return this;
@@ -247,9 +261,16 @@ public class StreamConfiguration {
             return this;
         }
 
-        /** Whether this stream asks for experimental packed 4:4:4: the session's choice, not the saved setting. */
+        /** Whether this stream may ask for packed 4:4:4: the session's choice, not the saved setting. */
         public StreamConfiguration.Builder setPacked444(boolean packed444) {
             config.packed444 = packed444;
+            return this;
+        }
+
+        /** Sharper colored text is Automatic, and whether PyroWave is the chosen codec. */
+        public StreamConfiguration.Builder setSharpColor(boolean sharpColor, boolean pyroWaveChosen) {
+            config.sharpColor = sharpColor;
+            config.pyroWaveChosen = pyroWaveChosen;
             return this;
         }
 
@@ -394,6 +415,21 @@ public class StreamConfiguration {
         return packed444;
     }
 
+    public boolean isSharpColor() {
+        return sharpColor;
+    }
+
+    public boolean isPyroWaveChosen() {
+        return pyroWaveChosen;
+    }
+
+    /** Sharper colored text's pick before the launch: packed or not, and the formats it leaves. */
+    void applySharpColor(boolean packed, int formats, boolean sdr10) {
+        packed444 = packed;
+        supportedVideoFormats = formats;
+        sdr10Bit = sdr10;
+    }
+
     public int getAttachedGamepadMask() {
         return attachedGamepadMask;
     }
@@ -416,6 +452,14 @@ public class StreamConfiguration {
 
     public int getVirtualDisplayDpi() {
         return virtualDisplayDpi;
+    }
+
+    public Boolean getRtxHdr() {
+        return rtxHdr;
+    }
+
+    public Boolean getRtxVideo() {
+        return rtxVideo;
     }
 
     public boolean getVrr() {

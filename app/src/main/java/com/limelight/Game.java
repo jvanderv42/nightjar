@@ -397,6 +397,8 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
     final com.limelight.ui.StreamMessages messages = new com.limelight.ui.StreamMessages(this);
     // From the first time the user opens USB devices until the stream stops.
     com.limelight.binding.usb.UsbForwarding usbForwarding;
+    /** Join requests and guests of this device's game, on hosts that offer them. */
+    StreamGuests streamGuests;
     // Clipboard sync (0x5508) while this stream's PC runs it.
     com.limelight.utils.ClipboardSync clipboardSync;
     final Runnable showStreamMenuHint = overlays::showStreamMenuHint;
@@ -591,6 +593,8 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
         // One connection to a PC at a time: a stream ends Microphone only, whose close it then waits for.
         com.limelight.mic.MicOnlyService.stop(this);
         streamConnection.onCreate(savedInstanceState);
+        // Optional gyro diagnostics are available in debug and release builds.
+        com.limelight.binding.input.GyroDiagnosticOverlay.attach(this);
     }
 
     static boolean isValidLaunch(String host, int port, String uniqueId, int appId, String appUuid) {
@@ -886,6 +890,7 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
 
     @Override
     protected void onDestroy() {
+        com.limelight.binding.input.GyroDiagnosticOverlay.detach(this);
         DualScreen.end(this);
         if (nativeMenuThread != null) nativeMenuThread.shutdownNow();
         if (streamHealthThread != null) streamHealthThread.shutdownNow();
@@ -1206,6 +1211,10 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
                                         leftX, leftY, rightX, rightY, leftTrigger, rightTrigger);
                             }
                         }, prefConfig, game);
+                // The Steam Controller trackpads, as the classic controller sends them.
+                modernController.setTouchSink((type, pointer, x, y, pressure) -> {
+                    if (controllerHandler != null) controllerHandler.reportOscTouch(type, pointer, x, y, pressure);
+                });
                 modernController.setOnLayoutChanged(() -> {
                     if (micButton != null) micButton.place();
                     if (menuButton != null) menuButton.place();

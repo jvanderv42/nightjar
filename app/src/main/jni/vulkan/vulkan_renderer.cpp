@@ -23,6 +23,7 @@
 #include <android/looper.h>
 
 #include "output_format.h"
+#include "ycbcr_components.h"
 #include "../window-dataspace/window_dataspace.h"
 #include "shaders_spv.h"
 
@@ -65,8 +66,17 @@ namespace {
         float uvClamp[4];
         float params[4];
         float params2[4];
-        float ycbcr[4];  // Unused: the shaders keep the layout from when PyroWave shared them
+        // Frame Warp (video_warp.frag): xy = shift of the picture's centre as fractions of the
+        // picture, z = 1 to keep the HUD mask in place; the picture's UV rect, the crop less any
+        // padding (xy its top left, zw its size); and the lens terms the rest of the picture is
+        // turned through (xy = k, zw = n; 0, 0, 1, 1 for a flat picture). Unused by video.frag.
+        float warp[4];
+        float warpRect[4];
+        float warpLens[4];
     };
+    // Every Vulkan device takes at least 128 bytes of push constants (maxPushConstantsSize)
+    static_assert(sizeof(PushConstants) == 7 * 4 * sizeof(float) && sizeof(PushConstants) <= 128,
+                  "PushConstants must match the shaders' block and fit the guaranteed size");
 
     constexpr float kOutputPassthrough = 0.0f;
     constexpr float kOutputPqToSdr = 1.0f;
@@ -82,6 +92,11 @@ namespace {
                   vkr::kVkColorSpaceHdr10Hlg == VK_COLOR_SPACE_HDR10_HLG_EXT);
     static_assert(vkr::kDataspaceBt2020Pq == ADATASPACE_BT2020_PQ &&
                   vkr::kDataspaceBt2020Hlg == ADATASPACE_BT2020_HLG);
+    static_assert(vkr::kVkComponentSwizzleIdentity == VK_COMPONENT_SWIZZLE_IDENTITY &&
+                  vkr::kVkComponentSwizzleR == VK_COMPONENT_SWIZZLE_R &&
+                  vkr::kVkComponentSwizzleB == VK_COMPONENT_SWIZZLE_B &&
+                  vkr::kVkFormatG10X6B10X6R10X6TwoPlane420Unorm3Pack16 ==
+                          VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16);
 
     // Quarter turns clockwise for a pre-rotation, or -1 for a transform we can't render
     int quarterTurns(VkSurfaceTransformFlagBitsKHR transform) {
@@ -403,6 +418,18 @@ bool VulkanRenderer::init(ANativeWindow* output) {
         return false;
     }
 
+    // Frame Warp's pass, when the stream draws it. Without it the picture is drawn as it is, and
+    // Java, which asks drawsFrameWarp(), tells the PC and the user.
+    warpApi_ = config_.frameWarp;
+    if (warpApi_ && !createWarpResources()) {
+        ALOGW("Frame Warp: its pass could not be set up; drawing without it");
+        destroyWarpResources();
+        warpApi_ = nullptr;
+    }
+    if (warpApi_) {
+        ALOGI("Frame Warp: drawn by the Vulkan renderer");
+    }
+
     // Performance hints for the render threads (PerfHint), set up before any of them start. On
     // unless turned off with adb shell setprop debug.moonlight.perf_hint 0; the target each
     // render's CPU time is held to can be changed with
@@ -561,6 +588,7 @@ bool VulkanRenderer::pickDevice() {
                 vk_.vkGetPhysicalDeviceProperties(device, &props);
                 timestampValidBits_ = families[i].timestampValidBits;
                 timestampPeriodNs_ = props.limits.timestampPeriod;
+                vendorId_ = props.vendorID;
                 ALOGI("Using %s (Vulkan %u.%u.%u), queue family %u", props.deviceName,
                       VK_API_VERSION_MAJOR(props.apiVersion), VK_API_VERSION_MINOR(props.apiVersion),
                       VK_API_VERSION_PATCH(props.apiVersion), i);
@@ -961,6 +989,7 @@ VulkanRenderer::~VulkanRenderer() {
         // What stop() left alone if the GPU was wedged (a no-op otherwise)
         releaseOutput();
         destroyConversion();
+        destroyWarpResources();
         for (int i = 0; i < kFramesInFlight; i++) {
             if (fences_[i]) vk_.vkDestroyFence(device_, fences_[i], nullptr);
             if (imageAcquired_[i]) vk_.vkDestroySemaphore(device_, imageAcquired_[i], nullptr);
@@ -1224,6 +1253,10 @@ void VulkanRenderer::onImageAvailable() {
         // MediaCodec stamps each image with the frame's presentation time, which is the host's
         // timestamp for the frame
         ndk_->AImage_getTimestamp(image, &frame->timing.hostPtsNs);
+        if (warpApi_) {
+            // The frame number Java noted for the time the decoder was given the frame with
+            frame->frameNumber = warpApi_->frame_for_pts(frame->timing.hostPtsNs / 1000);
+        }
         frame->reporter = this;
         if (ndk_->AImage_getCropRect(image, &frame->crop) != AMEDIA_OK) {
             frame->crop = {0, 0, 0, 0};
@@ -1567,7 +1600,7 @@ void VulkanRenderer::onVsync(int64_t frameTimeNanos) {
     if (presentAhead_ && !presentOnArrival_) {
         presentAhead();
     }
-    if (!frame) {
+    if (!frame && !warpRefresh(frameTimeNanos)) {
         keepAlive();
     }
     collectPresentTimings();
@@ -1611,7 +1644,60 @@ void VulkanRenderer::keepAlive() {
     renderFrame(current_, presentId, 0, false, 0, true);
 }
 
+// Frame Warp between the host's pictures: the one on screen is presented again, shifted for the
+// turn since, when its shift moved by kFrameWarpRedrawPx or more, so a turn shows at every refresh and
+// not only with the host's frames. Stamped like a keep-alive present, so a new picture due at the
+// same vsync replaces it; nothing is drawn while a new picture waits for its vsync, after one was
+// presented since this vsync, or before the vsync the last one asked for. Each costs one render,
+// only while the view turns.
+bool VulkanRenderer::warpRefresh(int64_t vsyncNs) {
+    // Without a time to present it at, a FIFO swapchain would show it ahead of the next new frame
+    // presented for the same vsync, a vsync late; a front buffer is not presented again
+    if (!warpApi_ || !current_ || swapchainDirty_ || frontBuffer_ || !(hasDisplayTimingExt_ || presentOnArrival_) ||
+            lastPresentNs_ >= vsyncNs || warpDueNs_ > vsyncNs + currentPeriodNs_ / 4) {
+        return false;
+    }
+    // Without the stream's lock first: nothing can have moved unless the model is locked and the
+    // view turns (FrameWarpDrawn::mayMove())
+    if (!warpDrawn_.mayMove(warpApi_)) {
+        return false;
+    }
+    // Peeked, so a refresh that draws nothing is not counted; renderFrame() takes the shift it draws
+    float out[FRAME_WARP_FLOATS] = {};
+    const bool active = warpApi_->peek(current_->frameNumber, out) != FRAME_WARP_INACTIVE;
+    if (!frameWarpMoved(warpDrawn_.px[0], warpDrawn_.px[1], active ? out[2] : 0.0f, active ? out[3] : 0.0f)) {
+        return false;
+    }
+
+    uint64_t presentId = 0;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!pending_.empty()) {
+            // A new picture waiting for its vsync, which will be presented then
+            return false;
+        }
+        if (hasDisplayTimingExt_) {
+            presentId = nextPresentId_++;
+        }
+        trace_.keepAlive(nowNs(), presentId);
+    }
+    return renderFrame(current_, presentId, 0, false, 0, true);
+}
+
+// Presenting ahead draws a frame as it arrives for a vsync up to a few ahead, and Frame Warp's
+// shift is taken as it is drawn: the turn until that vsync would be missing from it, and the
+// redraws between pictures wait for that vsync (warpDueNs_), so each picture would step by up to
+// a frame's turn. While the host's model is locked, frames wait for their vsync instead
+// (onVsync()), drawn then for the next refresh. An aligned front buffer draws ahead-presented
+// frames at their scan, so it keeps presenting ahead.
+bool VulkanRenderer::presentsAhead() const {
+    return presentAhead_ && (!warpHoldsAhead_ || frontBufferPaced_);
+}
+
 void VulkanRenderer::presentAhead() {
+    if (!presentsAhead()) {
+        return;
+    }
     // In order, as long as each waiting frame's vsync is known and comes after the last one
     // committed. Anything else waits for its vsync.
     for (;;) {
@@ -1806,11 +1892,33 @@ bool VulkanRenderer::renderFrame(const FramePtr& frame, uint64_t presentId, int6
     pc.uvRect[1] = crop.top / bufferHeight;
     pc.uvRect[2] = (crop.right - crop.left) / bufferWidth;
     pc.uvRect[3] = (crop.bottom - crop.top) / bufferHeight;
-    // Stay half a texel inside the crop so filtering never pulls in padding
-    pc.uvClamp[0] = (crop.left + 0.5f) / bufferWidth;
-    pc.uvClamp[1] = (crop.top + 0.5f) / bufferHeight;
-    pc.uvClamp[2] = (crop.right - 0.5f) / bufferWidth;
-    pc.uvClamp[3] = (crop.bottom - 0.5f) / bufferHeight;
+    // Frame Warp samples only the stream's picture. A decoder can leave an encoder's padding in
+    // its crop (AMD's AV1 at 2184x1968 as 2240x1968, black at the right), which the stream view
+    // pushes off screen (StreamView.setDecodedPadding()); a shift would pull it back in.
+    FrameWarpRect picture {crop.left, crop.top, crop.right, crop.bottom};
+    if (warpApi_) {
+        picture = frameWarpPicture(picture, config_.streamWidth, config_.streamHeight);
+    }
+    // Stay half a texel inside the picture so filtering never pulls in padding
+    pc.uvClamp[0] = (picture.left + 0.5f) / bufferWidth;
+    pc.uvClamp[1] = (picture.top + 0.5f) / bufferHeight;
+    pc.uvClamp[2] = (picture.right - 0.5f) / bufferWidth;
+    pc.uvClamp[3] = (picture.bottom - 0.5f) / bufferHeight;
+    pc.warpRect[0] = picture.left / bufferWidth;
+    pc.warpRect[1] = picture.top / bufferHeight;
+    pc.warpRect[2] = (picture.right - picture.left) / bufferWidth;
+    pc.warpRect[3] = (picture.bottom - picture.top) / bufferHeight;
+    if (warpApi_ && (width != warpLoggedWidth_ || height != warpLoggedHeight_ || crop.left != warpLoggedCrop_.left ||
+            crop.top != warpLoggedCrop_.top || crop.right != warpLoggedCrop_.right ||
+            crop.bottom != warpLoggedCrop_.bottom)) {
+        warpLoggedWidth_ = width;
+        warpLoggedHeight_ = height;
+        warpLoggedCrop_ = crop;
+        ALOGI("Frame Warp: buffer %ux%u, crop %d,%d-%d,%d, stream %dx%d, picture %d,%d-%d,%d, clamp %.5f,%.5f-%.5f,%.5f",
+              width, height, crop.left, crop.top, crop.right, crop.bottom, config_.streamWidth, config_.streamHeight,
+              picture.left, picture.top, picture.right, picture.bottom, pc.uvClamp[0], pc.uvClamp[1], pc.uvClamp[2],
+              pc.uvClamp[3]);
+    }
 
     // Low dithers at the output's own precision. High dithers at 8-bit precision even on a
     // 10-bit output, which also hides banding from an 8-bit panel or compositor further on.
@@ -1834,6 +1942,25 @@ bool VulkanRenderer::renderFrame(const FramePtr& frame, uint64_t presentId, int6
     pc.params[3] = hlg ? kHlgNominalPeakNits : contentPeakNits;
     pc.params2[0] = kSdrWhiteNits;
     pc.params2[1] = static_cast<float>(std::max(quarterTurns(preTransform_), 0));
+
+    // Frame Warp: the picture's shift as of now, as fractions of the picture, and the lens terms
+    // the rest of it is turned through. The input count is read first, so input sent while the
+    // shift is worked out shows as new at the next refresh.
+    int32_t warpCode = FRAME_WARP_INACTIVE;
+    float warpOut[FRAME_WARP_FLOATS];
+    frameWarpStill(warpOut);
+    uint32_t warpSeq = 0;
+    if (warpApi_) {
+        warpCells_.poll(warpApi_);
+        warpSeq = warpApi_->input_seq();
+        warpCode = warpApi_->warp(frame->frameNumber, warpOut);
+        if (warpCode == FRAME_WARP_INACTIVE) {
+            frameWarpStill(warpOut);
+        }
+        pc.warp[0] = warpOut[0];
+        pc.warp[1] = warpOut[1];
+    }
+    memcpy(pc.warpLens, warpOut + 4, sizeof(pc.warpLens));
 
     VkCommandBuffer cmd = commandBuffers_[slot];
     vk_.vkResetCommandBuffer(cmd, 0);
@@ -1863,6 +1990,12 @@ bool VulkanRenderer::renderFrame(const FramePtr& frame, uint64_t presentId, int6
         vk_.vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestampPool_, kTimestampsPerFrame * slot + 1);
     }
 
+    if (warpApi_) {
+        // The HUD stays put only with the mask the host drew this picture's HUD for
+        const int32_t held = recordWarpMask(slot, cmd);
+        pc.warp[2] = warpCode >= 0 && warpCode == held ? 1.0f : 0.0f;
+    }
+
     VkRenderPassBeginInfo rpBegin {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
     rpBegin.renderPass = renderPass_;
     rpBegin.framebuffer = framebuffers_[imageIndex];
@@ -1876,6 +2009,10 @@ bool VulkanRenderer::renderFrame(const FramePtr& frame, uint64_t presentId, int6
     vk_.vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
     vk_.vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_, 0, 1,
                                 &imported->descriptorSet, 0, nullptr);
+    if (warpApi_) {
+        vk_.vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_, 1, 1,
+                                    &warpMasks_[slot].set, 0, nullptr);
+    }
     vk_.vkCmdPushConstants(cmd, pipelineLayout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                            0, sizeof(pc), &pc);
     vk_.vkCmdDraw(cmd, 3, 1, 0, 0);
@@ -1950,6 +2087,9 @@ bool VulkanRenderer::renderFrame(const FramePtr& frame, uint64_t presentId, int6
         }
         noteFailure("submitting a frame to the GPU", result, kFatalFailures);
         return false;
+    }
+    if (warpApi_) {
+        warpMasks_[slot].generation = warpMasks_[slot].writing;
     }
     if (frontBufferAligned_ && frontBuffer_) {
         drawSubmitNs_.push_back(nowNs() - startNs);
@@ -2031,6 +2171,18 @@ bool VulkanRenderer::renderFrame(const FramePtr& frame, uint64_t presentId, int6
     perfHint_.reportWork(nowNs() - startNs - (acquiredNs - releasedNs) - (fenceWaited ? fencedNs - fenceWaitNs : 0));
 
     const bool shown = result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR;
+    if (warpApi_ && shown) {
+        warpDrawn_.note(warpCode, warpOut, warpSeq);
+        // A present for a later vsync is asked for half a vsync ahead of it (PresentScheduler)
+        warpDueNs_ = !onArrival && presentTime.desiredPresentTime != 0 ?
+                static_cast<int64_t>(presentTime.desiredPresentTime) + currentPeriodNs_ / 2 : 0;
+        if (presentAhead_ && warpDrawn_.active != warpHoldsAhead_) {
+            // The model locked or unlocked: presenting ahead stops or starts (presentsAhead())
+            warpHoldsAhead_ = warpDrawn_.active;
+            std::lock_guard<std::mutex> lock(mutex_);
+            pacer_.setPresentAhead(presentsAhead());
+        }
+    }
     if (!shown && countedAtTag) {
         // Nothing was queued, so no report will come for the tag: the frame is counted when a
         // later present of it is
@@ -2144,7 +2296,7 @@ void VulkanRenderer::collectPresentTimings() {
         // frame is late on screen whatever the delay, and it shouldn't raise the delay for all
         // the others.
         const bool counts = pending != pendingPresents_.end() && !pending->second.onArrival &&
-                (!presentAhead_ || (pending->second.ahead && pending->second.slackNs >= presentScheduler_.guardNs()));
+                (!presentsAhead() || (pending->second.ahead && pending->second.slackNs >= presentScheduler_.guardNs()));
         if (counts) {
             presentScheduler_.onPresented(pending->second.vsyncNs, pending->second.delayVsyncs, currentPeriodNs_,
                                           static_cast<int64_t>(t.actualPresentTime),
@@ -2734,8 +2886,10 @@ bool VulkanRenderer::ensureConversion(const ConversionKey& key) {
 
     VkPushConstantRange range {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushConstants)};
     VkPipelineLayoutCreateInfo plInfo {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-    plInfo.setLayoutCount = 1;
-    plInfo.pSetLayouts = &setLayout_;
+    // Set 1 is Frame Warp's HUD mask (video_warp.frag)
+    const VkDescriptorSetLayout setLayouts[2] = {setLayout_, warpSetLayout_};
+    plInfo.setLayoutCount = warpApi_ ? 2 : 1;
+    plInfo.pSetLayouts = setLayouts;
     plInfo.pushConstantRangeCount = 1;
     plInfo.pPushConstantRanges = &range;
     if (vk_.vkCreatePipelineLayout(device_, &plInfo, nullptr, &pipelineLayout_) != VK_SUCCESS) {
@@ -2744,8 +2898,9 @@ bool VulkanRenderer::ensureConversion(const ConversionKey& key) {
 
     conversionKey_ = key;
     haveConversion_ = true;
-    ALOGI("YCbCr conversion: external format %" PRIu64 ", format %d, model %d, range %d, filter %d",
-          key.externalFormat, key.format, key.model, key.range, key.filter);
+    ALOGI("YCbCr conversion: external format %" PRIu64 ", format %d, model %d, range %d, filter %d, "
+          "components %d %d %d %d", key.externalFormat, key.format, key.model, key.range, key.filter,
+          key.components.r, key.components.g, key.components.b, key.components.a);
     return true;
 }
 
@@ -2770,11 +2925,265 @@ void VulkanRenderer::destroyConversion() {
     haveConversion_ = false;
 }
 
+// ---------------------------------------------------------------------------------------------
+// Frame Warp (docs/frame-warp.md)
+
+int32_t VulkanRenderer::findMemoryType(uint32_t typeBits, VkMemoryPropertyFlags flags) const {
+    VkPhysicalDeviceMemoryProperties props {};
+    vk_.vkGetPhysicalDeviceMemoryProperties(physicalDevice_, &props);
+    for (uint32_t i = 0; i < props.memoryTypeCount && i < 32; i++) {
+        if ((typeBits & (1u << i)) != 0 && (props.memoryTypes[i].propertyFlags & flags) == flags) {
+            return static_cast<int32_t>(i);
+        }
+    }
+    return -1;
+}
+
+bool VulkanRenderer::createWarpResources() {
+    if (!vk_.vkCreateBuffer || !vk_.vkDestroyBuffer || !vk_.vkGetBufferMemoryRequirements ||
+            !vk_.vkBindBufferMemory || !vk_.vkMapMemory || !vk_.vkUnmapMemory || !vk_.vkCmdCopyBufferToImage) {
+        ALOGW("Frame Warp: the device lacks the buffer functions its mask needs");
+        return false;
+    }
+
+    VkShaderModuleCreateInfo shaderInfo {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+    shaderInfo.codeSize = sizeof(kVideoWarpFragSpv);
+    shaderInfo.pCode = kVideoWarpFragSpv;
+    if (vk_.vkCreateShaderModule(device_, &shaderInfo, nullptr, &warpFragShader_) != VK_SUCCESS) {
+        return false;
+    }
+
+    // One mask cell covers many pixels: nearest, so its edges stay where the host put them
+    VkSamplerCreateInfo samplerInfo {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+    samplerInfo.magFilter = VK_FILTER_NEAREST;
+    samplerInfo.minFilter = VK_FILTER_NEAREST;
+    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.maxLod = 0.0f;
+    samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
+    if (vk_.vkCreateSampler(device_, &samplerInfo, nullptr, &warpSampler_) != VK_SUCCESS) {
+        return false;
+    }
+
+    VkDescriptorSetLayoutBinding binding {};
+    binding.binding = 0;
+    binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    binding.descriptorCount = 1;
+    binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    binding.pImmutableSamplers = &warpSampler_;
+    VkDescriptorSetLayoutCreateInfo layoutInfo {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    layoutInfo.bindingCount = 1;
+    layoutInfo.pBindings = &binding;
+    if (vk_.vkCreateDescriptorSetLayout(device_, &layoutInfo, nullptr, &warpSetLayout_) != VK_SUCCESS) {
+        return false;
+    }
+
+    VkDescriptorPoolSize poolSize {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, static_cast<uint32_t>(kFramesInFlight)};
+    VkDescriptorPoolCreateInfo poolInfo {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    poolInfo.maxSets = static_cast<uint32_t>(kFramesInFlight);
+    poolInfo.poolSizeCount = 1;
+    poolInfo.pPoolSizes = &poolSize;
+    if (vk_.vkCreateDescriptorPool(device_, &poolInfo, nullptr, &warpPool_) != VK_SUCCESS) {
+        return false;
+    }
+
+    // A mask per frame in flight, each written while its slot's fence says the GPU is done with it
+    for (WarpMask& mask : warpMasks_) {
+        VkDescriptorSetAllocateInfo allocInfo {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        allocInfo.descriptorPool = warpPool_;
+        allocInfo.descriptorSetCount = 1;
+        allocInfo.pSetLayouts = &warpSetLayout_;
+        if (vk_.vkAllocateDescriptorSets(device_, &allocInfo, &mask.set) != VK_SUCCESS ||
+                !createWarpMask(mask, 1, 1)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void VulkanRenderer::destroyWarpResources() {
+    for (WarpMask& mask : warpMasks_) {
+        destroyWarpMask(mask);
+        // Freed with the pool
+        mask.set = VK_NULL_HANDLE;
+    }
+    if (warpPool_) vk_.vkDestroyDescriptorPool(device_, warpPool_, nullptr);
+    if (warpSetLayout_) vk_.vkDestroyDescriptorSetLayout(device_, warpSetLayout_, nullptr);
+    if (warpSampler_) vk_.vkDestroySampler(device_, warpSampler_, nullptr);
+    if (warpFragShader_) vk_.vkDestroyShaderModule(device_, warpFragShader_, nullptr);
+    warpPool_ = VK_NULL_HANDLE;
+    warpSetLayout_ = VK_NULL_HANDLE;
+    warpSampler_ = VK_NULL_HANDLE;
+    warpFragShader_ = VK_NULL_HANDLE;
+}
+
+// Makes the mask's image (R8, width by height cells) and the host-visible buffer it is written
+// from, and points the mask's descriptor set at the image. What a failure left is for
+// destroyWarpMask(); the set is only changed once everything else was made.
+bool VulkanRenderer::createWarpMask(WarpMask& mask, uint32_t width, uint32_t height) {
+    VkImageCreateInfo imageInfo {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageInfo.format = VK_FORMAT_R8_UNORM;
+    imageInfo.extent = {width, height, 1};
+    imageInfo.mipLevels = 1;
+    imageInfo.arrayLayers = 1;
+    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imageInfo.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    if (vk_.vkCreateImage(device_, &imageInfo, nullptr, &mask.image) != VK_SUCCESS) {
+        return false;
+    }
+    VkMemoryRequirements imageNeeds {};
+    vk_.vkGetImageMemoryRequirements(device_, mask.image, &imageNeeds);
+    int32_t type = findMemoryType(imageNeeds.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (type < 0) {
+        type = findMemoryType(imageNeeds.memoryTypeBits, 0);
+    }
+    if (type < 0) {
+        return false;
+    }
+    VkMemoryAllocateInfo allocInfo {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    allocInfo.allocationSize = imageNeeds.size;
+    allocInfo.memoryTypeIndex = static_cast<uint32_t>(type);
+    if (vk_.vkAllocateMemory(device_, &allocInfo, nullptr, &mask.memory) != VK_SUCCESS ||
+            vk_.vkBindImageMemory(device_, mask.image, mask.memory, 0) != VK_SUCCESS) {
+        return false;
+    }
+    VkImageViewCreateInfo viewInfo {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    viewInfo.image = mask.image;
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.format = VK_FORMAT_R8_UNORM;
+    viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    if (vk_.vkCreateImageView(device_, &viewInfo, nullptr, &mask.view) != VK_SUCCESS) {
+        return false;
+    }
+
+    const VkDeviceSize bytes = static_cast<VkDeviceSize>(width) * height;
+    VkBufferCreateInfo bufferInfo {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+    bufferInfo.size = bytes;
+    bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    if (vk_.vkCreateBuffer(device_, &bufferInfo, nullptr, &mask.staging) != VK_SUCCESS) {
+        return false;
+    }
+    VkMemoryRequirements bufferNeeds {};
+    vk_.vkGetBufferMemoryRequirements(device_, mask.staging, &bufferNeeds);
+    // Coherent, so the writes are the GPU's at the submit without a flush
+    type = findMemoryType(bufferNeeds.memoryTypeBits,
+                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    if (type < 0) {
+        return false;
+    }
+    allocInfo.allocationSize = bufferNeeds.size;
+    allocInfo.memoryTypeIndex = static_cast<uint32_t>(type);
+    if (vk_.vkAllocateMemory(device_, &allocInfo, nullptr, &mask.stagingMemory) != VK_SUCCESS ||
+            vk_.vkBindBufferMemory(device_, mask.staging, mask.stagingMemory, 0) != VK_SUCCESS ||
+            vk_.vkMapMemory(device_, mask.stagingMemory, 0, VK_WHOLE_SIZE, 0, &mask.mapped) != VK_SUCCESS) {
+        mask.mapped = nullptr;
+        return false;
+    }
+    memset(mask.mapped, 0, static_cast<size_t>(bytes));
+    mask.width = width;
+    mask.height = height;
+    mask.generation = kWarpMaskUnwritten;
+    mask.writing = kWarpMaskUnwritten;
+
+    // The sampler is the layout's (immutable)
+    VkDescriptorImageInfo imageDescriptor {};
+    imageDescriptor.imageView = mask.view;
+    imageDescriptor.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkWriteDescriptorSet write {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    write.dstSet = mask.set;
+    write.dstBinding = 0;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.pImageInfo = &imageDescriptor;
+    vk_.vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+    return true;
+}
+
+// Everything but the descriptor set, which stays the mask's
+void VulkanRenderer::destroyWarpMask(WarpMask& mask) {
+    if (mask.mapped) vk_.vkUnmapMemory(device_, mask.stagingMemory);
+    if (mask.staging) vk_.vkDestroyBuffer(device_, mask.staging, nullptr);
+    if (mask.stagingMemory) vk_.vkFreeMemory(device_, mask.stagingMemory, nullptr);
+    if (mask.view) vk_.vkDestroyImageView(device_, mask.view, nullptr);
+    if (mask.image) vk_.vkDestroyImage(device_, mask.image, nullptr);
+    if (mask.memory) vk_.vkFreeMemory(device_, mask.memory, nullptr);
+    const VkDescriptorSet set = mask.set;
+    mask = WarpMask {};
+    mask.set = set;
+}
+
+// The slot's fence was waited on (renderFrame()), so the GPU is done with its mask and buffer.
+// Records a write of the newest mask, or of an empty one, when the slot's image holds another;
+// it becomes the image's once the commands are submitted (writing to generation).
+int32_t VulkanRenderer::recordWarpMask(int slot, VkCommandBuffer cmd) {
+    WarpMask& mask = warpMasks_[slot];
+    const bool cells = warpCells_.any() && !warpMaskFailed_;
+    const int32_t target = cells ? warpCells_.generation : kWarpMaskEmpty;
+    mask.writing = mask.generation;
+    if (mask.generation == target) {
+        return target;
+    }
+    if (cells && (mask.width != warpCells_.width || mask.height != warpCells_.height)) {
+        WarpMask resized;
+        resized.set = mask.set;
+        if (createWarpMask(resized, warpCells_.width, warpCells_.height)) {
+            destroyWarpMask(mask);
+            mask = resized;
+        }
+        else {
+            ALOGW("Frame Warp: no %ux%u mask image; the HUD is shifted with the picture",
+                  warpCells_.width, warpCells_.height);
+            destroyWarpMask(resized);
+            warpMaskFailed_ = true;
+            return recordWarpMask(slot, cmd);
+        }
+    }
+
+    if (cells) {
+        memcpy(mask.mapped, warpCells_.cells.data(), static_cast<size_t>(mask.width) * mask.height);
+    }
+    else {
+        memset(mask.mapped, 0, static_cast<size_t>(mask.width) * mask.height);
+    }
+    VkImageMemoryBarrier toWrite {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    // Its last reads were in this slot's last commands, which the fence covered
+    toWrite.srcAccessMask = 0;
+    toWrite.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    toWrite.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    toWrite.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    toWrite.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toWrite.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toWrite.image = mask.image;
+    toWrite.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    vk_.vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             0, 0, nullptr, 0, nullptr, 1, &toWrite);
+    VkBufferImageCopy region {};
+    region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.imageExtent = {mask.width, mask.height, 1};
+    vk_.vkCmdCopyBufferToImage(cmd, mask.staging, mask.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+    VkImageMemoryBarrier toRead = toWrite;
+    toRead.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    toRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    toRead.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    toRead.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    vk_.vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                             0, 0, nullptr, 0, nullptr, 1, &toRead);
+    mask.writing = target;
+    return target;
+}
+
 bool VulkanRenderer::ensurePipeline() {
     if (pipeline_) {
         return true;
     }
-    return createPipeline(pipelineLayout_, fragShader_, &pipeline_);
+    return createPipeline(pipelineLayout_, warpApi_ ? warpFragShader_ : fragShader_, &pipeline_);
 }
 
 void VulkanRenderer::destroyPipelines() {
@@ -2884,6 +3293,10 @@ VulkanRenderer::ImportedBuffer* VulkanRenderer::importBuffer(AHardwareBuffer* bu
         key.range = config_.fullRange ? VK_SAMPLER_YCBCR_RANGE_ITU_FULL : VK_SAMPLER_YCBCR_RANGE_ITU_NARROW;
         if (!key.ycbcr) {
             key.components = {};
+        }
+        else {
+            // The chroma of Tegra's P010 buffers, swapped back (ycbcr_components.h)
+            key.components = vkr::ycbcrComponents(key.components, vendorId_, key.format);
         }
 
         if (!ensureConversion(key)) {

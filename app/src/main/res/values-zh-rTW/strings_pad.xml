@@ -1,15 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="title_list_osc_style">Controller style</string>
-    <string name="summary_list_osc_style">Classic is the original on-screen gamepad. Modern has analog sticks that follow your thumb, face buttons that press two at once between them, and a layout editor that can keep a layout for each game.</string>
+    <string name="summary_list_osc_style">「Modern」的搖桿會跟隨拇指，ABXY 按鈕可以兩個同時按下。「Classic」保留原本的配置；兩者向電腦傳送的是同一種控制器。</string>
     <string name="osc_style_classic">Classic</string>
     <string name="osc_style_modern">Modern</string>
     <string name="title_list_osc_stick_mode">Modern controller sticks</string>
-    <string name="summary_list_osc_stick_mode">Floating centers a stick where your thumb lands; Fixed keeps it where it is drawn.</string>
+    <string name="summary_list_osc_stick_mode">「Floating」以拇指落點作為搖桿中心，不必準確按到搖桿。如果比較喜歡對準畫出來的搖桿去按，請選「Fixed」。</string>
     <string name="osc_stick_floating">Floating</string>
     <string name="osc_stick_fixed">Fixed</string>
     <string name="title_seekbar_osc_stick_deadzone">Modern controller stick deadzone</string>
-    <string name="summary_seekbar_osc_stick_deadzone">How far a thumb moves before a modern controller stick answers</string>
+    <string name="summary_seekbar_osc_stick_deadzone">拇指移動多遠後搖桿才會回應。如果拇指靜止放著時視角或角色仍會飄移，請調高；想要更精細的瞄準時調低。</string>
     <string name="pad_edit_title">Edit controller layout</string>
     <string name="pad_edit_all">All controls</string>
     <string name="pad_edit_hidden">%1$s (hidden)</string>
@@ -32,4 +32,8 @@
     <string name="pad_home">Home</string>
     <string name="pad_touchpad">觸控板</string>
     <string name="pad_wasd">WASD 搖桿</string>
+    <string name="pad_left_trackpad">左觸控板</string>
+    <string name="pad_right_trackpad">右觸控板</string>
+    <string name="pad_left_grip">左握把</string>
+    <string name="pad_right_grip">右握把</string>
 </resources>

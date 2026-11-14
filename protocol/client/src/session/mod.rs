@@ -156,8 +156,18 @@ pub struct SessionConfig {
     /// Windows the session threads are raised. On for the desktop; Android's Debug setting
     /// "Decoder priority for receiving", off by default.
     pub receive_decode_priority: bool,
+    /// Nightjar's "Group incoming video packets": the network stack may hand over several
+    /// video datagrams in one read (UDP_GRO on Linux and Android, receive coalescing on
+    /// Windows). On by default in the apps; off, each datagram is read on its own (Linux and
+    /// Android still take `recvmmsg` batches). A Windows adapter that loses the size of a
+    /// coalesced read turns it off for the stream by itself (`net::BatchReceiver`).
+    pub receive_coalescing: bool,
     /// Client roaming (Experimental), with hosts that advertise it.
     pub roaming: RoamingConfig,
+    /// Frame Warp: the session counts input for it, asks a host that lists 0x5543 for its
+    /// model, tags and HUD mask, and feeds them in. The app hands the same state to its
+    /// presenter.
+    pub frame_warp: Option<Arc<crate::frame_warp::FrameWarp>>,
 }
 
 /// The decoder's answer for a frame (`DR_OK`, `DR_NEED_IDR`).
@@ -1185,6 +1195,7 @@ fn start(
     driver_config.network_grace = config.network_grace;
     driver_config.unbatched_input = config.unbatched_input;
     driver_config.input_disabled = config.remote_monitor;
+    driver_config.frame_warp = config.frame_warp.clone().filter(|_| !config.remote_monitor);
     driver_config.warn = driver::Warn::new({
         let shared = parts.shared.clone();
         move |message| shared.warn(message)
@@ -1194,7 +1205,7 @@ fn start(
     listener.stage_starting(Stage::VideoStreamInit);
     let stream = &outcome.config;
     let video_encrypted = outcome.encryption_enabled & sdp::SS_ENC_VIDEO != 0;
-    let video_shared = Arc::new(video::VideoShared::new(VideoReceiver::new(VideoConfig {
+    let mut receiver = VideoReceiver::new(VideoConfig {
         format: outcome.negotiated_video_format,
         packet_size: stream.packet_size as usize,
         app_version: outcome.app_version,
@@ -1203,7 +1214,17 @@ fn start(
         colorspace: stream.color_space as u8,
         encryption_key: video_encrypted.then_some(stream.remote_input_aes_key),
         early_chunks: video_decoder.wants_early_chunks(),
-    })));
+    });
+    // The host runs congestion control on per-packet arrivals (0x5547).
+    if caps.supports_control_message(
+        rubylight_protocol::transport_feedback::TRANSPORT_FEEDBACK_MESSAGE_TYPE,
+    ) {
+        receiver.enable_transport_feedback();
+        parts
+            .shared
+            .log("Video arrival feedback is on: the host adapts to the network from it");
+    }
+    let video_shared = Arc::new(video::VideoShared::new(receiver));
     parts.video_shared = Some(video_shared.clone());
     listener.stage_complete(Stage::VideoStreamInit);
 
@@ -1226,6 +1247,13 @@ fn start(
             },
         )?;
     parts.control = Some(control.clone());
+    if let Some(warp) = config.frame_warp.as_ref().filter(|_| !config.remote_monitor) {
+        let request = warp.request(true);
+        match control.send(ClientMessage::FrameWarpRequest(request)) {
+            Ok(()) => listener.log("Frame Warp: asked the host for its model, tags and HUD mask"),
+            Err(error) => listener.log(&format!("Frame Warp: the host does not offer it ({error:?})")),
+        }
+    }
     let events = parts.shared.clone();
     let hdr_video = video_shared.clone();
     // Set once the streams run. Only the roamer moves sockets, so a roam that commits before
@@ -1335,6 +1363,7 @@ fn start(
             target: net::with_port(remote, outcome.video_port),
             ping_payload: outcome.video_ping_payload,
             direct_submit: outcome.video_capabilities & sdp::CAPABILITY_DIRECT_SUBMIT != 0,
+            receive_coalescing: config.receive_coalescing,
             next_socket: parts.video_next_socket.clone(),
         };
         parts.video = Some(

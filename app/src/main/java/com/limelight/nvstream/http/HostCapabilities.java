@@ -60,6 +60,8 @@ public final class HostCapabilities {
         HOST_TIMING(0),
         WEB_UI(R.string.host_feature_web_ui),
         CURSOR_SHAPE(R.string.host_feature_cursor_shape),
+        /** Frame Warp (docs/protocol/frame-warp.md): the host learns the camera turn and tags its frames. */
+        FRAME_WARP(R.string.host_feature_frame_warp),
         /** Rubylight's /api/native/v1: library, session actions, Radeon state. The UI shows its results, not its name. */
         NATIVE_API(0),
         /** Sleep PC (/power-actions/v1, Vibepollo's wire format): suspend an idle host. */
@@ -95,6 +97,8 @@ public final class HostCapabilities {
         CLIENT_KEYBOARD_LAYOUT(0),
         /** Pen barrel roll (input 0x5500000B). */
         PEN_BARREL_ROLL(0),
+        /** Controller identities (input 0x55000080) and the C button: a Switch 2 Pro Controller gets its own pad. */
+        CONTROLLER_IDENTITY(0),
         /** Pipeline frame rates for the overlay (0x553D). */
         PIPELINE_RATES(0),
         /**
@@ -102,6 +106,11 @@ public final class HostCapabilities {
          * its first. Any other host takes it for the first stream starting again and drops that one.
          */
         SECOND_SCREEN(0),
+        /**
+         * Play over the internet (RustHostInternetPlayVersion, paired serverinfo only): the host publishes
+         * rendezvous records for its paired devices and answers hole punches (internet-play/v1).
+         */
+        INTERNET_PLAY(0),
         /** PNG clipboard (native "clipboard.image"). Known only after {@link #withNativeCapabilities}. */
         IMAGE_CLIPBOARD(0),
         /** Shared folders (native "folders"). Known only after {@link #withNativeCapabilities}. */
@@ -223,6 +232,8 @@ public final class HostCapabilities {
     public static final int PYROWAVE_CODEC_BITS = 0x00800000 | 0x01000000 | 0x02000000 | 0x04000000;
     /** Bit of {@link #nativeFeatures()}; keep in step with HOST_FEATURE_PYROWAVE_RECORDS in pyrowave_protocol.h. */
     public static final int NATIVE_PYROWAVE_RECORDS = 1;
+    /** Bit of {@link #nativeFeatures()}: the host takes controller identities and the C button. */
+    public static final int NATIVE_CONTROLLER_IDENTITY = 2;
     /** HdrFormats, AudioCodecs and AudioLayouts bits; keep in step with rubylight_protocol::hdr and audio_ext. */
     static final int HDR_HLG = 2;
     static final int HDR_DOLBY_VISION = 4 | 8 | 16;
@@ -283,6 +294,50 @@ public final class HostCapabilities {
         return features.get(feature).isSupported();
     }
 
+    /** The serverinfo field naming the image enhancements a host offers (rubylight_protocol::nvidia_enhance). */
+    public static final String NVIDIA_ENHANCEMENTS_FIELD = "NvidiaEnhancements";
+    /** RTX HDR, turned on or off for a stream with {@link #RTX_HDR_PARAMETER}. */
+    public static final int RTX_HDR = 1;
+    /** RTX Video enhancement, turned on or off for a stream with {@link #RTX_VIDEO_PARAMETER}. */
+    public static final int RTX_VIDEO = 2;
+    static final int ALL_ENHANCEMENTS = RTX_HDR | RTX_VIDEO;
+    public static final String RTX_HDR_PARAMETER = "rlRtxHdr";
+    public static final String RTX_VIDEO_PARAMETER = "rlRtxVideo";
+
+    /** The field's bits this client knows; junk reads as none. */
+    static int parseEnhancements(String text) {
+        try {
+            long mask = Long.parseLong(text.trim());
+            return mask < 0 || mask > 0xFFFFFFFFL ? 0 : (int) (mask & ALL_ENHANCEMENTS);
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    /** The image enhancements the host offers per stream ({@link #RTX_HDR}, {@link #RTX_VIDEO} bits). */
+    public int nvidiaEnhancements() {
+        return evidence == null ? 0 : evidence.nvidiaEnhancements;
+    }
+
+    public boolean offersEnhancement(int bit) {
+        return (nvidiaEnhancements() & bit) != 0;
+    }
+
+    /**
+     * The launch parameters for this device's choices (null follows the PC's app setting), only for
+     * enhancements the host offers. Shared rule: rubylight_protocol::nvidia_enhance::launch_parameters.
+     */
+    public String enhancementParameters(Boolean rtxHdr, Boolean rtxVideo) {
+        StringBuilder out = new StringBuilder();
+        if (rtxHdr != null && offersEnhancement(RTX_HDR)) {
+            out.append('&').append(RTX_HDR_PARAMETER).append('=').append(rtxHdr ? '1' : '0');
+        }
+        if (rtxVideo != null && offersEnhancement(RTX_VIDEO)) {
+            out.append('&').append(RTX_VIDEO_PARAMETER).append('=').append(rtxVideo ? '1' : '0');
+        }
+        return out.toString();
+    }
+
     public Availability availability(Feature feature) {
         return features.get(feature);
     }
@@ -313,7 +368,8 @@ public final class HostCapabilities {
 
     /** Feature bits for the native stream, which has no other way to learn them. */
     public int nativeFeatures() {
-        return has(Feature.PYROWAVE_RECORDS) ? NATIVE_PYROWAVE_RECORDS : 0;
+        return (has(Feature.PYROWAVE_RECORDS) ? NATIVE_PYROWAVE_RECORDS : 0)
+                | (has(Feature.CONTROLLER_IDENTITY) ? NATIVE_CONTROLLER_IDENTITY : 0);
     }
 
     /**
@@ -324,7 +380,7 @@ public final class HostCapabilities {
         return has(Feature.PYROWAVE) ? serverCodecModeSupport : serverCodecModeSupport & ~PYROWAVE_CODEC_BITS;
     }
 
-    /** "Rubylight 2.2.21", "Apollo-compatible host" and so on, for identification only. */
+    /** "Rubylight 2.2.21", "Apollo-compatible streaming app" and so on, for identification only. */
     public String familyLabel(Context context) {
         switch (family) {
             case RUBYLIGHT:
@@ -590,6 +646,7 @@ public final class HostCapabilities {
         boolean controllerPreparation;
         boolean currentGameUuid;
         int cursorShapeVersion = -1;
+        int frameWarpVersion = -1;
         /** -1 when the host has no native API, 0 when it has one but not for this request. */
         int nativeApiVersion = -1;
         /** -1 without PowerActionVersion: hosts send it only to paired clients over HTTPS. */
@@ -617,11 +674,16 @@ public final class HostCapabilities {
         int textInputVersion = -1;
         int keyboardLayoutVersion = -1;
         int penBarrelRollVersion = -1;
+        int controllerIdentityVersion = -1;
         int pipelineRatesVersion = -1;
         /** -1 without DisplayScaleVersion: the host ignores rlDisplayScale. */
         int displayScaleVersion = -1;
         /** -1 without SecondScreenVersion: the host ends the first stream when a second one of the device starts. */
         int secondScreenVersion = -1;
+        /** NvidiaEnhancements: the image enhancements the host offers per stream (RTX_HDR, RTX_VIDEO bits). */
+        int nvidiaEnhancements = 0;
+        /** -1 without RustHostInternetPlayVersion, 0 when the host has Play over the internet off. */
+        int internetPlayVersion = -1;
         /** usb, clipboard.image and folders in the native features, and this device's usb and shared_folders. */
         boolean usbOffered;
         boolean usbPermission;
@@ -715,6 +777,9 @@ public final class HostCapabilities {
                     case "CursorShapeVersion":
                         evidence.cursorShapeVersion = (int) unsigned(parser.nextText(), 0xFFFF);
                         break;
+                    case "FrameWarpVersion":
+                        evidence.frameWarpVersion = (int) unsigned(parser.nextText(), 0xFFFF);
+                        break;
                     case "HdrFormats":
                         evidence.hdrFormats = (int) unsigned(parser.nextText(), 0xFF);
                         break;
@@ -739,6 +804,9 @@ public final class HostCapabilities {
                     case "PenBarrelRollVersion":
                         evidence.penBarrelRollVersion = (int) unsigned(parser.nextText(), 0xFFFF);
                         break;
+                    case "ControllerIdentityVersion":
+                        evidence.controllerIdentityVersion = (int) unsigned(parser.nextText(), 0xFFFF);
+                        break;
                     case "PipelineRatesVersion":
                         evidence.pipelineRatesVersion = (int) unsigned(parser.nextText(), 0xFFFF);
                         break;
@@ -747,6 +815,12 @@ public final class HostCapabilities {
                         break;
                     case "SecondScreenVersion":
                         evidence.secondScreenVersion = (int) unsigned(parser.nextText(), 0xFFFF);
+                        break;
+                    case NVIDIA_ENHANCEMENTS_FIELD:
+                        evidence.nvidiaEnhancements = parseEnhancements(parser.nextText());
+                        break;
+                    case "RustHostInternetPlayVersion":
+                        evidence.internetPlayVersion = (int) unsigned(parser.nextText(), 0xFFFF);
                         break;
                     case "NativeApiVersion":
                         evidence.nativeApiVersion = (int) unsigned(parser.nextText(), 0xFFFF);
@@ -934,6 +1008,9 @@ public final class HostCapabilities {
                 case CURSOR_SHAPE:
                     // docs/protocol/cursor-shape.md: the highest version the host speaks; it also speaks 1.
                     return cursorShapeVersion >= 1 ? Availability.SUPPORTED : absent(false);
+                case FRAME_WARP:
+                    // docs/protocol/frame-warp.md: the highest version the host speaks; it also speaks 1.
+                    return frameWarpVersion >= 1 ? Availability.SUPPORTED : absent(false);
                 case NATIVE_API:
                     // The host reports 0 over plain HTTP and to an unpaired certificate.
                     if (nativeApiVersion == -1) {
@@ -981,10 +1058,14 @@ public final class HostCapabilities {
                     return serverInfoVersion(keyboardLayoutVersion);
                 case PEN_BARREL_ROLL:
                     return serverInfoVersion(penBarrelRollVersion);
+                case CONTROLLER_IDENTITY:
+                    return serverInfoVersion(controllerIdentityVersion);
                 case PIPELINE_RATES:
                     return serverInfoVersion(pipelineRatesVersion);
                 case SECOND_SCREEN:
                     return serverInfoVersion(secondScreenVersion);
+                case INTERNET_PLAY:
+                    return serverInfoVersion(internetPlayVersion);
                 case USB_FORWARDING:
                     return nativeFeature(usbOffered, usbPermission ? null : Reason.USB_PERMISSION);
                 case IMAGE_CLIPBOARD: {
@@ -1051,7 +1132,8 @@ public final class HostCapabilities {
                     .put("pyroWaveCodecs", pyroWaveCodecs).put("encoderBitrate", encoderBitrate)
                     .put("hardwareMetricsVersion", hardwareMetricsVersion).put("networkPathVersion", networkPathVersion)
                     .put("controllerPreparation", controllerPreparation).put("currentGameUuid", currentGameUuid)
-                    .put("cursorShapeVersion", cursorShapeVersion).put("nativeApiVersion", nativeApiVersion)
+                    .put("cursorShapeVersion", cursorShapeVersion).put("frameWarpVersion", frameWarpVersion)
+                    .put("nativeApiVersion", nativeApiVersion)
                     .put("powerActionVersion", powerActionVersion).put("sleepSupported", sleepSupported)
                     .put("sleepAllowed", sleepAllowed).put("nativeCapabilities", nativeCapabilities)
                     .put("filesUpload", filesUpload).put("filesDownload", filesDownload)
@@ -1062,9 +1144,12 @@ public final class HostCapabilities {
                     .put("audioLayouts", audioLayouts).put("textInputVersion", textInputVersion)
                     .put("keyboardLayoutVersion", keyboardLayoutVersion)
                     .put("penBarrelRollVersion", penBarrelRollVersion)
+                    .put("controllerIdentityVersion", controllerIdentityVersion)
                     .put("pipelineRatesVersion", pipelineRatesVersion)
                     .put("displayScaleVersion", displayScaleVersion)
-                    .put("secondScreenVersion", secondScreenVersion).put("usbOffered", usbOffered)
+                    .put("secondScreenVersion", secondScreenVersion).put("nvidiaEnhancements", nvidiaEnhancements)
+                    .put("internetPlayVersion", internetPlayVersion)
+                    .put("usbOffered", usbOffered)
                     .put("usbPermission", usbPermission).put("imageClipboardOffered", imageClipboardOffered)
                     .put("foldersOffered", foldersOffered).put("folderPermission", folderPermission)
                     .put("coopOffered", coopOffered).put("micOnlyOffered", micOnlyOffered);
@@ -1098,6 +1183,8 @@ public final class HostCapabilities {
             evidence.currentGameUuid = object.getBoolean("currentGameUuid");
             // Absent from capabilities stored before cursor shapes existed.
             evidence.cursorShapeVersion = object.optInt("cursorShapeVersion", -1);
+            // Absent from capabilities stored before Frame Warp existed.
+            evidence.frameWarpVersion = object.optInt("frameWarpVersion", -1);
             evidence.nativeApiVersion = object.optInt("nativeApiVersion", -1);
             evidence.powerActionVersion = object.optInt("powerActionVersion", -1);
             evidence.sleepSupported = object.optBoolean("sleepSupported", false);
@@ -1116,9 +1203,12 @@ public final class HostCapabilities {
             evidence.textInputVersion = object.optInt("textInputVersion", -1);
             evidence.keyboardLayoutVersion = object.optInt("keyboardLayoutVersion", -1);
             evidence.penBarrelRollVersion = object.optInt("penBarrelRollVersion", -1);
+            evidence.controllerIdentityVersion = object.optInt("controllerIdentityVersion", -1);
             evidence.pipelineRatesVersion = object.optInt("pipelineRatesVersion", -1);
             evidence.displayScaleVersion = object.optInt("displayScaleVersion", -1);
             evidence.secondScreenVersion = object.optInt("secondScreenVersion", -1);
+            evidence.nvidiaEnhancements = object.optInt("nvidiaEnhancements", 0) & ALL_ENHANCEMENTS;
+            evidence.internetPlayVersion = object.optInt("internetPlayVersion", -1);
             evidence.usbOffered = object.optBoolean("usbOffered", false);
             evidence.usbPermission = object.optBoolean("usbPermission", false);
             evidence.imageClipboardOffered = object.optBoolean("imageClipboardOffered", false);
@@ -1156,7 +1246,8 @@ public final class HostCapabilities {
                     encoderBitrate == that.encoderBitrate && hardwareMetricsVersion == that.hardwareMetricsVersion &&
                     networkPathVersion == that.networkPathVersion &&
                     controllerPreparation == that.controllerPreparation && currentGameUuid == that.currentGameUuid &&
-                    cursorShapeVersion == that.cursorShapeVersion && nativeApiVersion == that.nativeApiVersion &&
+                    cursorShapeVersion == that.cursorShapeVersion && frameWarpVersion == that.frameWarpVersion &&
+                    nativeApiVersion == that.nativeApiVersion &&
                     powerActionVersion == that.powerActionVersion && sleepSupported == that.sleepSupported &&
                     sleepAllowed == that.sleepAllowed && nativeCapabilities == that.nativeCapabilities &&
                     filesUpload == that.filesUpload && filesDownload == that.filesDownload &&
@@ -1167,8 +1258,11 @@ public final class HostCapabilities {
                     audioCodecs == that.audioCodecs && audioLayouts == that.audioLayouts &&
                     textInputVersion == that.textInputVersion && keyboardLayoutVersion == that.keyboardLayoutVersion &&
                     penBarrelRollVersion == that.penBarrelRollVersion &&
+                    controllerIdentityVersion == that.controllerIdentityVersion &&
                     pipelineRatesVersion == that.pipelineRatesVersion && displayScaleVersion == that.displayScaleVersion &&
                     secondScreenVersion == that.secondScreenVersion &&
+                    nvidiaEnhancements == that.nvidiaEnhancements &&
+                    internetPlayVersion == that.internetPlayVersion &&
                     usbOffered == that.usbOffered &&
                     usbPermission == that.usbPermission && imageClipboardOffered == that.imageClipboardOffered &&
                     foldersOffered == that.foldersOffered && folderPermission == that.folderPermission &&
@@ -1180,12 +1274,12 @@ public final class HostCapabilities {
             return Objects.hash(gameStream, sunshineVersion, paired, rustHostVersion, permission, serverCommands,
                     virtualDisplayCapable, virtualDisplayDriverReady, virtualDisplayHdrCapable, frameLimiter,
                     pyroWaveFields, pyroWaveProbeBytes, pyroWaveCodecs, encoderBitrate, hardwareMetricsVersion,
-                    networkPathVersion, controllerPreparation, currentGameUuid, cursorShapeVersion,
+                    networkPathVersion, controllerPreparation, currentGameUuid, cursorShapeVersion, frameWarpVersion,
                     nativeApiVersion, powerActionVersion, sleepSupported, sleepAllowed, nativeCapabilities, filesUpload,
                     filesDownload, fileUploadPermission, fileDownloadPermission, hdrFormats, fecControlVersion,
                     bandwidthProbeVersion, audioCodecs, audioLayouts, textInputVersion, keyboardLayoutVersion,
-                    penBarrelRollVersion, pipelineRatesVersion, displayScaleVersion, secondScreenVersion, usbOffered, usbPermission,
-                    imageClipboardOffered, foldersOffered, folderPermission, coopOffered, micOnlyOffered);
+                    penBarrelRollVersion, controllerIdentityVersion, pipelineRatesVersion, displayScaleVersion, secondScreenVersion, nvidiaEnhancements, internetPlayVersion, usbOffered,
+                    usbPermission, imageClipboardOffered, foldersOffered, folderPermission, coopOffered, micOnlyOffered);
         }
     }
 }

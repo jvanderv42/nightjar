@@ -42,7 +42,7 @@ public final class StreamMenu {
         VIDEO_SCALING, ZOOM, ZOOM_RESET, OVERLAY_PAGE, PICTURE_IN_PICTURE, VIDEO_OUTPUT,
         BITRATE, RATE_CHANGE, AUTOMATIC_QUALITY, AUTOMATIC_BITRATE,
         HOST_MENU, SERVER_COMMANDS, CLIPBOARD_SEND, CLIPBOARD_RECEIVE, IMAGE_CLIPBOARD_SEND, IMAGE_CLIPBOARD_RECEIVE,
-        USB_DEVICES, FILES, HOST_WEB_UI, HOST_STATUS,
+        USB_DEVICES, GUESTS, FILES, HOST_WEB_UI, HOST_STATUS,
         RECONNECT, DISCONNECT, CONFIRM_DISCONNECT, QUIT_GAME, END_SESSION, END_HOST_SESSION, CLOSE_GAME,
         NATIVE_PAGE, NATIVE_RESUME, SHORTCUTS, MORE, CLOSE,
         OVERLAY_OFF, OVERLAY_COMPACT, OVERLAY_STATISTICS, OVERLAY_DEBUG,
@@ -117,6 +117,8 @@ public final class StreamMenu {
         public boolean hostMenu;
         /** The host offers USB forwarding and it is on here (Rust engine only). */
         public boolean usbForwarding;
+        /** The host lets other devices join this game as guests and this device manages them ({@code session.guests}). */
+        public boolean sessionGuests;
         /** The host's native API carries clipboard images ({@code clipboard.image}). */
         public boolean imageClipboard;
         /** The host offers night mode and headphone surround for this device's stream ({@code audio.*}). */
@@ -271,8 +273,9 @@ public final class StreamMenu {
                 entries.add(action(Section.QUALITY, Item.AUTOMATIC_QUALITY, R.string.title_adaptive_quality, R.drawable.ic_tune));
             }
             if ((runtimeBitrate && host.encoderBitrateSupported) || o.rateChangeBitrate) {
-                entries.add(action(Section.QUALITY, Item.AUTOMATIC_BITRATE, o.automaticBitrateOn ?
-                        R.string.stream_auto_bitrate_disable : R.string.stream_auto_bitrate_enable, R.drawable.ic_network));
+                // The setting's own name, checked while it is on, as desktop's switch shows it.
+                entries.add(entry(Section.QUALITY, Item.AUTOMATIC_BITRATE, R.string.title_auto_bitrate,
+                        R.drawable.ic_network, o.automaticBitrateOn));
             }
         }
 
@@ -303,6 +306,10 @@ public final class StreamMenu {
         if (o.role != NvApp.Role.REMOTE_MONITOR && o.usbForwarding) {
             entries.add(action(Section.HOST, Item.USB_DEVICES, R.string.stream_usb_devices, R.drawable.ic_usb));
         }
+        // Only the device playing (or one with Host control) manages who joined its game.
+        if (o.role == NvApp.Role.STREAM && o.sessionGuests) {
+            entries.add(action(Section.HOST, Item.GUESTS, R.string.guests_title, R.drawable.ic_guests));
+        }
         // File transfer belongs to the PC, not the session; its screen says whether this device may use it.
         if (caps.has(HostCapabilities.Feature.NATIVE_API)) {
             entries.add(action(Section.HOST, Item.FILES, R.string.files_menu, R.drawable.ic_files));
@@ -319,8 +326,8 @@ public final class StreamMenu {
     }
 
     /**
-     * Disconnect first, right under Return to stream; Reconnect waits on the More page, and the actions that end the
-     * PC's game or session close the group in the error colour.
+     * Disconnect first, right under Return to stream; the actions that end the PC's game or session close the group in the
+     * error colour. Under the grid stand Disconnect and the game's end; Reconnect and End session wait on the More page.
      */
     private static void addSession(List<Entry> entries, Options o) {
         ComputerDetails host = o.host;
@@ -643,11 +650,12 @@ public final class StreamMenu {
             LimeLog.warning("Stream menu: the model failed: " + e.getMessage());
             layout = null;
             failure = sheet.addNote(sheet.addGroup(), activity.getString(R.string.stream_menu_model_failed, e.getMessage()), true);
+            // The ways out stay the model's two, Disconnect and the game's end; Reconnect and End session join the list.
             List<Entry> plain = new ArrayList<>();
-            for (Entry entry : offered) if (entry.section != Section.SESSION) plain.add(entry);
+            for (Entry entry : offered) if (!FALLBACK_FOOTER.contains(id(entry.item))) plain.add(entry);
             addRows(plain);
             entries.addAll(plain);
-            addFooter(offered, null, null);
+            addFooter(offered, FALLBACK_FOOTER, null);
             sheet.setFirstAction(plain.isEmpty() ? rows.get(Item.CLOSE) : rows.get(firstFocus(plain)));
             return;
         }
@@ -696,6 +704,13 @@ public final class StreamMenu {
         addStatus(o, offered, statusCells, labels);
         addFooter(offered, layout.footer, labels);
     }
+
+    /**
+     * The ways out under the list when the model cannot answer, as its footer has them: Disconnect and what ends the game (or a
+     * remote monitor's or input-only stream's End). End session, which leaves the game running, is a row as on More.
+     */
+    static final List<String> FALLBACK_FOOTER = java.util.Collections.unmodifiableList(java.util.Arrays.asList(
+            id(Item.DISCONNECT), id(Item.CLOSE_GAME), id(Item.QUIT_GAME), id(Item.END_SESSION)));
 
     // The model's cells that say something about the stream read better as rows with their value than as one more tile.
     private static boolean isStatusRow(String id) {
@@ -816,8 +831,8 @@ public final class StreamMenu {
     }
 
     /**
-     * The round X back to the stream, then the ways out in the model's order and in its words (all of them, in this client's
-     * words, when it failed); the last that ends something is the one red control. A way out only Android offers, a remote
+     * The round X back to the stream, then the ways out in the model's order and in its words ({@link #FALLBACK_FOOTER}, in
+     * this client's words, when it failed); the last that ends something is the one red control. A way out only Android offers, a remote
      * monitor's, keeps its own words.
      */
     private void addFooter(List<Entry> offered, List<String> footer, java.util.Map<String, String> labels) {
@@ -888,8 +903,12 @@ public final class StreamMenu {
         return choices;
     }
 
-    /** A saved choice as this version reads it: Close game and Quit game became one choice, Quit game. */
+    /**
+     * A saved choice as this version reads it: Close game and Quit game became one choice, Quit game; End session moved under
+     * More, where no button runs it, so a button that ran it is back on Default.
+     */
     static String buttonChoice(String saved) {
+        if ("end_host_session".equals(saved)) return "default";
         return "close_game".equals(saved) ? "quit_game" : saved;
     }
 

@@ -128,6 +128,34 @@ nightjar --host <PC name or UUID> [--app <app name or UUID>] [--quit-on-exit]
 - `--quit-on-exit` closes Nightjar when the stream ends.
 - Exit codes: 0 when you cancel the start, 1 when the PC or app is unknown, ambiguous or unreachable or the stream cannot start (the reason goes to stderr and the log), and 64 for a wrong command line.
 
+Tools written for moonlight-qt, such as MoonDeck, can use its form instead:
+
+```text
+nightjar [options] stream <PC name or UUID> <app name or UUID>
+```
+
+It starts the app and closes Nightjar when the stream ends. moonlight-qt's stream options work in both forms and change only the streams of that run, never the saved settings:
+
+- `--resolution <width>x<height>` (or `--720`, `--1080`, `--1440`, `--4K`), `--fps <n>` and `--bitrate <Kbps>`. A resolution or frame rate without a bitrate gets the automatic bitrate for it.
+- `--video-codec auto|H.264|HEVC|AV1`, `--video-decoder auto|software|hardware`, `--audio-config stereo|5.1-surround|7.1-surround`, `--display-mode fullscreen|windowed|borderless` and `--capture-system-keys never|fullscreen|always`.
+- On/off options, each with a `--no-` form: `--hdr`, `--vsync`, `--frame-pacing` (Smoothest video; `--no-frame-pacing` is Lowest latency), `--performance-overlay`, `--quit-after` (leaving the stream quits the game on the PC), `--yuv444` (Sharper colored text), `--audio-on-host`, `--absolute-mouse`, `--game-optimization`, `--multi-controller`, `--swap-gamepad-buttons` and `--background-gamepad`.
+- `--packet-size`, `--mouse-buttons-swap`, `--touchscreen-trackpad`, `--mute-on-focus-loss`, `--reverse-scroll-direction` and `--keep-awake` are accepted and change nothing.
+
+`nightjar list <PC name or UUID> [--verbose]` prints the PC's apps, one name a line, without opening a window, as moonlight-qt's `list` does; MoonDeck reads it to add the PC's apps to Steam. It exits with 0, with -1 (255 on Linux) when the PC is not saved, not paired or cannot be reached, and with 1 when the PC does not give its app list. moonlight-qt's `list --csv` is not available.
+
+### Without a desktop (Linux)
+
+On a console or kiosk box with no Wayland or X11 session, Nightjar draws straight to the display through DRM/KMS and reads keyboards, mice and controllers from evdev. The whole app works there fullscreen, the PC list and settings included, and so does the command line above:
+
+```text
+nightjar --kms --host <PC name or UUID> --app <app name or UUID> --quit-on-exit
+```
+
+- `--kms` draws straight to the display for this start, `--no-kms` through the desktop, whatever **Display output** (Settings › Advanced) says. At its default, Automatic, Nightjar draws straight to the display only when no Wayland or X11 session is there. `SDL_VIDEO_DRIVER` in the environment wins over both.
+- Start it from a text console (Ctrl+Alt+F3, a getty autologin or a systemd service on a VT), as a user with read and write access to `/dev/dri/card*` and `/dev/input/event*`: the `video` and `input` groups, or a seat from logind. No other program may be showing on that display.
+- A stream's pictures go straight onto a display plane, with HDR10, VRR and content type Game sent to the display, and the overlay and stream menu on a plane above them (**Video planes**, on by default). Upscaling, Frame Warp, Sharper colored text and PyroWave are drawn by the renderer instead. Where the display or driver refuses the planes, the stream is drawn by the renderer and a notice says so; the log says why.
+- The log's `nightjar: kms:` lines say which way Nightjar draws and why, which planes a stream took and the display mode it chose.
+
 ## Fix an integration
 
 | Symptom | Cause | Fix |

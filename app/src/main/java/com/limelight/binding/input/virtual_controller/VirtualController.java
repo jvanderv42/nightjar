@@ -38,6 +38,11 @@ public class VirtualController {
         public short leftStickY = 0x0000;
     }
 
+    /** Where the on-screen trackpads' touches go: the controller handler, or a test. */
+    interface TouchSink {
+        void sendTouch(byte eventType, int pointerId, float x, float y, float pressure);
+    }
+
     public enum ControllerMode {
         Active,
         MoveButtons,
@@ -49,6 +54,7 @@ public class VirtualController {
     private final ControllerHandler controllerHandler;
     private final Context context;
     private final Handler handler;
+    private TouchSink touchSink;
 
     private final Runnable delayedRetransmitRunnable = new Runnable() {
         @Override
@@ -66,7 +72,7 @@ public class VirtualController {
 
     private List<VirtualControllerElement> elements = new ArrayList<>();
 
-    // While resizing: the panel with the opacity slider, and the control it sets (null until one is touched).
+    // While resizing: the panel with the opacity slider, and the control it sets (null: every control).
     private View opacityPanel;
     private Slider opacitySlider;
     private TextView opacityValue;
@@ -78,6 +84,7 @@ public class VirtualController {
         this.frame_layout = layout;
         this.context = context;
         this.handler = new Handler(Looper.getMainLooper());
+        if (controllerHandler != null) this.touchSink = controllerHandler::reportOscTouch;
 
         buttonConfigure = new Button(context);
         buttonConfigure.setAlpha(0.25f);
@@ -233,11 +240,26 @@ public class VirtualController {
         return currentMode == ControllerMode.ResizeButtons && editing == element;
     }
 
-    /** Sets the picked control's own opacity, in percent; nothing when no control is picked. */
+    /** Sets the picked control's own opacity, in percent; every control's until one is picked. */
     void setEditingOpacity(int opacity) {
-        if (editing == null) return;
-        editing.setButtonOpacity(opacity);
+        if (editing != null) {
+            editing.setButtonOpacity(opacity);
+        } else {
+            for (VirtualControllerElement element : elements) {
+                element.setButtonOpacity(opacity);
+            }
+        }
         updateOpacityPanel();
+    }
+
+    /** The opacity the slider shows: the picked control's, or before one is picked the highest of all. */
+    private int shownOpacity() {
+        if (editing != null) return editing.getButtonOpacity();
+        int highest = elements.isEmpty() ? VirtualControllerElement.MAX_BUTTON_OPACITY : VirtualControllerElement.MIN_BUTTON_OPACITY;
+        for (VirtualControllerElement element : elements) {
+            highest = Math.max(highest, element.getButtonOpacity());
+        }
+        return highest;
     }
 
     View getOpacityPanel() {
@@ -268,14 +290,15 @@ public class VirtualController {
 
     private void updateOpacityPanel() {
         if (opacityPanel == null) return;
-        int opacity = editing != null ? editing.getButtonOpacity() : VirtualControllerElement.MAX_BUTTON_OPACITY;
+        int opacity = shownOpacity();
         settingOpacity = true;
         // The slider moves in 5 % steps; a stored value between them shows at the nearest one.
         opacitySlider.setValue(Math.max(VirtualControllerElement.MIN_BUTTON_OPACITY,
                 Math.min(VirtualControllerElement.MAX_BUTTON_OPACITY, Math.round(opacity / 5f) * 5)));
         settingOpacity = false;
-        opacitySlider.setEnabled(editing != null);
-        opacityValue.setText(editing != null ? String.format(Locale.getDefault(), "%d %%", opacity) : "");
+        // Usable at once: before a control is touched it sets them all (nightjar#107).
+        opacitySlider.setEnabled(!elements.isEmpty());
+        opacityValue.setText(String.format(Locale.getDefault(), "%d %%", opacity));
     }
 
     public void releaseInput() {
@@ -315,6 +338,15 @@ public class VirtualController {
                     inputContext.rightTrigger
             );
         }
+    }
+
+    void setTouchSink(TouchSink touchSink) {
+        this.touchSink = touchSink;
+    }
+
+    /** A touch on one of the on-screen trackpads, for touchpad 0 of the controls' pad. */
+    void sendControllerTouch(byte eventType, int pointerId, float x, float y, float pressure) {
+        if (touchSink != null) touchSink.sendTouch(eventType, pointerId, x, y, pressure);
     }
 
     void sendControllerInputContext() {

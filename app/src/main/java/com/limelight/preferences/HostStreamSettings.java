@@ -70,6 +70,7 @@ import com.limelight.utils.ShortcutHelper;
 import com.limelight.utils.UiHelper;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -355,6 +356,7 @@ public class HostStreamSettings extends NightjarActivity {
         values.applyTo(config);
         // As when the stream starts: VRR set in a layer stays off where no screen has ARR.
         config.vrr &= DisplayFrameRatePolicy.vrrOffered(this);
+        config.resolveHostFrameTimes();
         if (config.resolutionFollowsScreen && !followedScreen) {
             String nativeResolution = PreferenceConfiguration.nativeResolution(this);
             if (nativeResolution != null) {
@@ -826,7 +828,15 @@ public class HostStreamSettings extends NightjarActivity {
             row(stream, "hdr", R.string.title_enable_hdr, () -> showSwitch("hdr", R.string.title_enable_hdr));
             row(stream, "vrr", R.string.title_vrr, () -> showSwitch("vrr", R.string.title_vrr));
             row(stream, "pacing", R.string.title_frame_pacing, this::showPacing);
-            row(stream, "yuv444", R.string.title_yuv444, () -> showSwitch("yuv444", R.string.title_yuv444));
+            row(stream, "yuv444", R.string.title_sharp_color, () -> showSwitch("yuv444", R.string.title_sharp_color));
+            // A PC's own choice over its app setting, for the image enhancements its host offers
+            // (NvidiaEnhancements); other hosts and profiles never show them.
+            if (activity.mode == Mode.PC && activity.caps.offersEnhancement(HostCapabilities.RTX_HDR)) {
+                row(stream, "rtx_hdr", R.string.title_rtx_hdr, () -> showEnhancement(HostStreamProfile.Field.RTX_HDR, R.string.title_rtx_hdr));
+            }
+            if (activity.mode == Mode.PC && activity.caps.offersEnhancement(HostCapabilities.RTX_VIDEO)) {
+                row(stream, "rtx_video", R.string.title_rtx_video, () -> showEnhancement(HostStreamProfile.Field.RTX_VIDEO, R.string.title_rtx_video));
+            }
             boolean pc = activity.mode == Mode.PC;
             int reset = pc ? R.string.host_profile_reset : R.string.layers_reset;
             row(stream, "reset", reset, () -> UiHelper.showDialog(activity,
@@ -937,6 +947,9 @@ public class HostStreamSettings extends NightjarActivity {
                     .setSummary(R.string.pc_settings_remote_summary);
             row(connection, "wake", R.string.pc_settings_wake, screen::showWakeHelp).setSummary(WakeTargets.hasMac(screen, pc) ?
                     R.string.pc_settings_wake_ready : R.string.pc_settings_wake_unknown);
+            List<String> wakeMacs = new WakeTargets(screen).manual(pc.uuid);
+            row(connection, "wake_macs", R.string.pc_settings_wake_macs, this::showWakeMacs).setSummary(wakeMacs.isEmpty() ?
+                    getString(R.string.pc_settings_wake_macs_none) : android.text.TextUtils.join(", ", wakeMacs));
 
             host.removeAll();
             HostFeatureGate webUi = gate(HostCapabilities.Feature.WEB_UI);
@@ -987,6 +1000,14 @@ public class HostStreamSettings extends NightjarActivity {
 
         private String onOff(boolean value) {
             return getString(value ? R.string.host_profile_on : R.string.host_profile_off);
+        }
+
+        /** On or Off; Sharper colored text reads Automatic or Off, as in Settings. */
+        private String switchText(String key, boolean value) {
+            if ("yuv444".equals(key)) {
+                return getResources().getStringArray(R.array.sharp_color_names)[value ? 1 : 0];
+            }
+            return onOff(value);
         }
 
         /** The value, marked with where it comes from when it is not set here. */
@@ -1102,7 +1123,7 @@ public class HostStreamSettings extends NightjarActivity {
             findPreference("sharpness").setEnabled(config.upscalingMode == UpscalingPolicy.Mode.FSR1 ||
                     config.upscalingMode == UpscalingPolicy.Mode.SGSR1);
             for (String key : new String[] {"hdr", "vrr", "yuv444", "full_range"}) {
-                findPreference(key).setSummary(summary(switchField(key), switchOverride(key) != null, onOff(switchValue(config, key))));
+                findPreference(key).setSummary(summary(switchField(key), switchOverride(key) != null, switchText(key, switchValue(config, key))));
             }
             String pacing = summary(HostStreamProfile.Field.PACING, own.pacing != null, pacingText(config));
             findPreference("pacing").setSummary(config.vrr ? pacing + "\n" + getString(R.string.layers_pacing_vrr) : pacing);
@@ -1126,6 +1147,14 @@ public class HostStreamSettings extends NightjarActivity {
             if (dpi != null) {
                 dpi.setSummary(summary(HostStreamProfile.Field.DISPLAY_SCALE, own.displayScale != null,
                         displayScaleText(config.virtualDisplayDpi)) + "\n" + getString(R.string.summary_virtual_display_dpi));
+            }
+            Preference rtxHdr = findPreference("rtx_hdr");
+            if (rtxHdr != null) {
+                rtxHdr.setSummary(enhancementText(own.rtxHdr) + "\n" + getString(R.string.summary_rtx_hdr));
+            }
+            Preference rtxVideo = findPreference("rtx_video");
+            if (rtxVideo != null) {
+                rtxVideo.setSummary(enhancementText(own.rtxVideo) + "\n" + getString(R.string.summary_rtx_video));
             }
             Preference preset = findPreference("preset");
             if (preset != null) {
@@ -1176,9 +1205,9 @@ public class HostStreamSettings extends NightjarActivity {
             boolean allPcs = switchValue(activity.global, key);
             Boolean own = switchOverride(key);
             CharSequence[] items = {
-                    sameAs(onOff(allPcs)),
-                    getString(R.string.host_profile_on),
-                    getString(R.string.host_profile_off)};
+                    sameAs(switchText(key, allPcs)),
+                    switchText(key, true),
+                    switchText(key, false)};
             int checked = own == null ? 0 : own ? 1 : 2;
             new NavigationDialogBuilder(activity).setTitle(title)
                     .setSingleChoiceItems(items, checked, (dialog, which) -> {
@@ -1216,6 +1245,25 @@ public class HostStreamSettings extends NightjarActivity {
             new NavigationDialogBuilder(activity).setTitle(R.string.title_frame_pacing)
                     .setSingleChoiceItems(items, checked, (dialog, which) -> {
                         activity.overrides.pacing = which == 0 ? null : values[which - 1];
+                        updateSummaries();
+                        dialog.dismiss();
+                    }).setNegativeButton(android.R.string.cancel, null).show();
+        }
+
+        /** An image enhancement's choice: the PC's app setting, on or off. */
+        private String enhancementText(Boolean choice) {
+            return choice == null ? getString(R.string.fec_choice_host) : onOff(choice);
+        }
+
+        private void showEnhancement(HostStreamProfile.Field field, int title) {
+            Boolean own = field == HostStreamProfile.Field.RTX_HDR ? activity.overrides.rtxHdr : activity.overrides.rtxVideo;
+            CharSequence[] items = {enhancementText(null), onOff(true), onOff(false)};
+            int checked = own == null ? 0 : own ? 1 : 2;
+            new NavigationDialogBuilder(activity).setTitle(title)
+                    .setSingleChoiceItems(items, checked, (dialog, which) -> {
+                        Boolean chosen = which == 0 ? null : which == 1;
+                        if (field == HostStreamProfile.Field.RTX_HDR) activity.overrides.rtxHdr = chosen;
+                        else activity.overrides.rtxVideo = chosen;
                         updateSummaries();
                         dialog.dismiss();
                     }).setNegativeButton(android.R.string.cancel, null).show();
@@ -1328,6 +1376,7 @@ public class HostStreamSettings extends NightjarActivity {
                 case "refresh": showNumber(key, R.string.host_profile_refresh); break;
                 case "bitrate": showNumber(key, R.string.host_profile_bitrate); break;
                 case "scale": showNumber(key, R.string.host_profile_scale); break;
+                case "wake_macs": showWakeMacs(); break;
                 default: activity.restoredEditorKey = null; break;
             }
         }
@@ -1529,6 +1578,46 @@ public class HostStreamSettings extends NightjarActivity {
                 });
             });
             showEditor(key, dialog);
+        }
+
+        /** The PC's own wake addresses: MACs of adapters that wake it besides the one it was paired over. */
+        private void showWakeMacs() {
+            WakeTargets targets = new WakeTargets(activity);
+            String uuid = activity.computer.uuid;
+            LinearLayout form = form();
+            TextView help = new TextView(activity);
+            help.setText(R.string.pc_settings_wake_macs_help);
+            // Set as a dialog message: a bare TextView takes only the app's face, black at the
+            // platform's smallest size on the night glass (nightjar#7's update dialog)
+            help.setTextAppearance(activity, R.style.TextAppearance_Nightjar_Body);
+            help.setTextColor(com.google.android.material.color.MaterialColors.getColor(help,
+                    com.google.android.material.R.attr.colorOnSurfaceVariant));
+            form.addView(help);
+            TextInputLayout container = new TextInputLayout(activity);
+            container.setHint(R.string.pc_settings_wake_macs);
+            EditText field = new TextInputEditText(container.getContext());
+            field.setId(R.id.host_profile_field_primary);
+            field.setContentDescription(getString(R.string.pc_settings_wake_macs));
+            field.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+                    | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+            field.setMinHeight(Math.round(56 * getResources().getDisplayMetrics().density));
+            field.setText(android.text.TextUtils.join("\n", targets.manual(uuid)));
+            container.addView(field);
+            form.addView(container);
+            AlertDialog dialog = new NavigationDialogBuilder(activity).setTitle(R.string.pc_settings_wake_macs)
+                    .setView(scrollable(form)).setPositiveButton(android.R.string.ok, null)
+                    .setNegativeButton(android.R.string.cancel, null).create();
+            dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+                List<String> macs = WakeTargets.parseMacs(field.getText().toString());
+                if (macs == null) {
+                    showError(field, getString(R.string.pc_settings_wake_macs_invalid));
+                    return;
+                }
+                targets.storeManual(uuid, macs);
+                showActions();
+                dialog.dismiss();
+            }));
+            showEditor("wake_macs", dialog);
         }
 
         private Integer readNumber(EditText field, int min, int max) {

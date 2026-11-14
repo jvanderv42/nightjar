@@ -85,6 +85,7 @@ fn feature_name(feature: Feature) -> &'static str {
         Feature::HostTiming => "host_timing",
         Feature::WebUi => "web_ui",
         Feature::CursorShape => "cursor_shape",
+        Feature::FrameWarp => "frame_warp",
         Feature::NativeApi => "native_api",
         Feature::Sleep => "sleep",
         Feature::FileUpload => "file_upload",
@@ -99,6 +100,7 @@ fn feature_name(feature: Feature) -> &'static str {
         Feature::TextInput => "text_input",
         Feature::ClientKeyboardLayout => "client_keyboard_layout",
         Feature::PenBarrelRoll => "pen_barrel_roll",
+        Feature::ControllerIdentity => "controller_identity",
         Feature::PipelineRates => "pipeline_rates",
         Feature::SecondScreen => "second_screen",
         Feature::ImageClipboard => "image_clipboard",
@@ -106,6 +108,7 @@ fn feature_name(feature: Feature) -> &'static str {
         Feature::Coop => "coop",
         Feature::MicOnly => "mic_only",
         Feature::ContinueHere => "continue_here",
+        Feature::InternetPlay => "internet_play",
     }
 }
 

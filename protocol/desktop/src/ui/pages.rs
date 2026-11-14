@@ -116,19 +116,20 @@ impl Launcher {
             ui.label(tr("Connect a controller to create a mapping."));
             return;
         }
-        ui.horizontal(|ui| {
-            if quiet_button(ui, "Reset mapping").clicked() {
-                self.controller_mapping = Mapping { name: self.controller_mapping.name.clone(), ..Default::default() };
-            }
-            ui.checkbox(&mut self.controller_test, tr("Test input (pause controller navigation)"));
-        });
+        if quiet_button(ui, "Reset mapping").clicked() {
+            self.controller_mapping = Mapping { name: self.controller_mapping.name.clone(), ..Default::default() };
+        }
+        // Rows whose label says it all: the list beside each names what it is set to.
+        const NO_HINT: &str = "";
         let mapping = &mut self.controller_mapping;
         column(ui, SETTINGS_W, |ui| {
+            // While it is on, the controller's input shows here instead of moving the focus.
+            row(ui, "Controller test", "Shows the buttons, sticks and triggers a controller sends.", |ui| toggle(ui, &mut self.controller_test));
             if self.controller_test {
                 let connected: Vec<_> = pads.pads.iter().filter(|p| p.key == self.controller_key).collect();
                 if connected.is_empty() { ui.label(tr("This controller is disconnected.")); }
                 for pad in connected {
-                    let report = pad.preview(mapping, self.settings.swap_face_buttons);
+                    let report = pad.preview(mapping, &self.settings);
                     let held = BUTTON_MAP.iter().zip(BUTTON_NAMES).filter_map(|(flag, name)| (report.buttons & flag != 0).then_some(tr(name))).collect::<Vec<_>>().join(", ");
                     ui.label(trf("Controller {}: {}", &[&(pad.index + 1), &if held.is_empty() { tr("No buttons held") } else { held.as_str() }]));
                     ui.label(trf("Left: {}, {}    Right: {}, {}    Triggers: {}, {}", &[&report.ls.0, &report.ls.1, &report.rs.0, &report.rs.1, &report.lt, &report.rt]));
@@ -155,7 +156,7 @@ impl Launcher {
                 let axis = tr(AXIS_NAMES[source.unsigned_abs().max(1) as usize - 1]);
                 let selected = if source == 0 { tr("Disabled").to_owned() }
                     else if source < 0 { trf("{} (inverted)", &[&axis]) } else { axis.to_owned() };
-                row(ui, name, "Choose the physical axis that drives this output.", |ui| {
+                row(ui, name, NO_HINT, |ui| {
                     Combo::from_id_salt(("axis-mapping", i)).selected_text(selected).show_ui(ui, |ui| {
                         ui.selectable_value(&mut mapping.axes[i], 0, tr("Disabled"));
                         let range = if i < 4 { 0..4 } else { 4..6 };
@@ -173,7 +174,7 @@ impl Launcher {
                     Some(0) => tr("Disabled"),
                     Some(flag) => tr(BUTTON_NAMES[BUTTON_MAP.iter().position(|b| *b == flag).expect("validated button")]),
                 };
-                row(ui, name, "Default follows the Nintendo layout setting. Explicit mappings take priority.", |ui| {
+                row(ui, name, NO_HINT, |ui| {
                     Combo::from_id_salt(("button-mapping", i)).selected_text(selected).show_ui(ui, |ui| {
                         ui.selectable_value(&mut mapping.buttons[i], None, tr("Default"));
                         ui.selectable_value(&mut mapping.buttons[i], Some(0), tr("Disabled"));
@@ -208,8 +209,8 @@ impl Launcher {
         let state = self.remote.state_for(id).cloned();
         let running = state == Some(CheckState::Running);
         column(ui, SETTINGS_W, |ui| {
-            section(ui, "Host");
-            detail(ui, tr("Host software"), &software);
+            section(ui, "PC");
+            detail(ui, tr("Streaming app"), &software);
             detail(ui, tr("Address"), &host.record.address);
             if let Some(gpu) = host.info.as_ref().and_then(|info| info.gpu_type.as_deref()).filter(|gpu| !gpu.is_empty()) {
                 detail(ui, tr("GPU"), gpu);
@@ -220,8 +221,8 @@ impl Launcher {
                 Some(Ok(url)) => {
                     // The address goes inside the card it belongs to, not loose under it.
                     let about = format!("{}
-{url}", tr("Manage the host's applications, paired devices and settings in its web UI. Sign in with the web UI's own account; pairing does not sign you in. Remote access requires a reachable web UI port."));
-                    let button = row(ui, "Host web UI", &about, |ui| quiet_button(ui, "Open in browser"));
+{url}", tr("Manage the PC’s apps, paired devices and streaming settings in its web UI. Sign in with the web UI’s own account; pairing does not sign you in. Remote access requires a reachable web UI port."));
+                    let button = row(ui, "The PC’s web UI", &about, |ui| quiet_button(ui, "Open in browser"));
                     self.focus_item(&button, "web-ui", true);
                     if button.clicked() {
                         commands.push(Command::OpenWebUi(url.clone()));
@@ -229,13 +230,12 @@ impl Launcher {
                 }
                 // The PC has a web UI, but its saved address makes no link to it.
                 Some(Err(why)) => {
-                    ui.label(RichText::new(tr("Host web UI")).font(semibold(text::BODY)).color(ON_SURFACE));
+                    ui.label(RichText::new(tr("The PC’s web UI")).font(semibold(text::BODY)).color(ON_SURFACE));
                     ui.label(RichText::new(why).color(ERROR));
                 }
             }
-            self.connection_address(ui, host, commands);
             section(ui, "Play away from home");
-            let button = row(ui, "Remote access", "Checks the paired PC's identity with five small HTTPS requests. It does not start a stream or download a speed-test file.", |ui| {
+            let button = row(ui, "Remote access", "Checks the paired PC’s identity with five small HTTPS requests. It does not start a stream or download a speed-test file.", |ui| {
                 if running {
                     quiet_button(ui, "Cancel")
                 } else {
@@ -259,10 +259,11 @@ impl Launcher {
                     });
                 }
                 Some(CheckState::Cancelled) => {
-                    ui.label(RichText::new(tr("Test cancelled. No host or network settings were changed.")).color(ON_SURFACE_VARIANT));
+                    ui.label(RichText::new(tr("Test cancelled. No PC or network settings were changed.")).color(ON_SURFACE_VARIANT));
                 }
                 Some(CheckState::Done(report)) => remote_report(ui, report),
             }
+            self.connection_address(ui, host, commands);
             if caps.has(nightjar_core::http::Feature::SharedFolders) {
                 self.shared_folders(ui, id, commands);
             }
@@ -272,20 +273,34 @@ impl Launcher {
         });
     }
 
-    /// The details page's connection address: Automatic, or one of the PC's known addresses to
-    /// always connect through (Moonlight V+ PC's address pinning). Shown once the PC has more
-    /// than one address, or while one is pinned.
+    /// The details page's connection rows: the PC's own wake addresses, and the connection
+    /// address (see `pinned_address`).
     pub(super) fn connection_address(&mut self, ui: &mut Ui, host: &Host, commands: &mut Vec<Command>) {
+        section(ui, "Connection");
+        self.pinned_address(ui, host, commands);
+        let own = &host.record.own_wake_macs;
+        let listed = own.join(", ");
+        let about = if own.is_empty() { en("MAC addresses of other adapters that can wake the PC") } else { listed.as_str() };
+        let button = row(ui, "Other wake addresses", about, |ui| quiet_button(ui, "Edit"));
+        self.focus_item(&button, "wake-addresses", false);
+        if button.clicked() {
+            self.dialog = Dialog::WakeAddresses { host: host.id, text: own.join("\n"), invalid: false };
+            self.focus_dialog = true;
+        }
+    }
+
+    /// Automatic, or one of the PC's known addresses to always connect through (Moonlight V+ PC's
+    /// address pinning). Shown once the PC has more than one address, or while one is pinned.
+    fn pinned_address(&mut self, ui: &mut Ui, host: &Host, commands: &mut Vec<Command>) {
         let record = &host.record;
         let known: Vec<&String> = std::iter::once(&record.address).chain(&record.other_addresses).collect();
         if known.len() < 2 && record.pinned_address.is_none() {
             return;
         }
-        section(ui, "Connection");
         let pinned = record.pinned_address.clone();
         let mut choice = pinned.clone();
         let shown = pinned.clone().unwrap_or_else(|| tr("Automatic").to_owned());
-        let chooser = row(ui, "Connection address", "Automatic tries the address that answered last, then the PC's other addresses. Choose one to always connect through it.", |ui| {
+        let chooser = row(ui, "Connection address", "Automatic tries the address that answered last, then the PC’s other addresses. Choose one to always connect through it.", |ui| {
             Combo::from_id_salt("pinned-address").selected_text(shown).show_ui(ui, |ui| {
                 ui.selectable_value(&mut choice, None, tr("Automatic"));
                 for address in &known {

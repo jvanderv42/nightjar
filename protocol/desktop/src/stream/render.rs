@@ -15,6 +15,11 @@ fn setup_size(setup: &session::VideoSetup) -> (i32, i32) {
     if setup.logical_width > 0 && setup.logical_height > 0 { (setup.logical_width, setup.logical_height) } else { (setup.width, setup.height) }
 }
 
+/// One refresh of a display refreshing `refresh_hz` times a second, in microseconds.
+fn refresh_period_us(refresh_hz: f32) -> u64 {
+    (1_000_000.0 / refresh_hz.max(1.0)) as u64
+}
+
 /// How long after a size change is asked for a picture that fits both the old and the new size
 /// plus alignment padding is still taken for the old one: AMD codes a 1920 and a 1904 wide AV1
 /// stream both 1920 wide, and the PC's old pictures are on their way for a while.
@@ -74,6 +79,17 @@ impl StreamSizes {
         }
         (visible, confirmed)
     }
+}
+
+/// A shown frame's two shares in microseconds: Nightjar's own work on the render thread, from the
+/// first look at the picture (`begin_us`) to the present call (upload or mapping, the draws, the
+/// overlay, a wait for the scan), and the present call itself, where the thread waits on what is
+/// not its own code: SDL's run of the queued draws, the driver, the refresh with V-Sync, the
+/// compositor (gamescope's Vulkan layer takes about 1.15 ms a present on an Iris Plus 655,
+/// rust/PERFORMANCE.md, November 12), and a GPU that is behind, whoever loaded it. The overlay's
+/// Render counts the first only; the second has its own line, Present wait.
+pub(super) fn frame_shares(begin_us: u64, issued_us: u64, returned_us: u64) -> (u64, u64) {
+    (issued_us.saturating_sub(begin_us), returned_us.saturating_sub(issued_us))
 }
 
 /// A present of the texture: when the call was issued and returned (us), and the beam around it.
@@ -170,6 +186,13 @@ impl Streaming {
         let due = match (due, self.skipped.due_us()) {
             (Some(due), Some(skipped)) => Some(due.min(skipped)),
             (due, skipped) => due.or(skipped),
+        };
+        // Frame Warp's next look at whether the held picture goes out again with a new shift.
+        let repeat = self.frame_warp.as_ref()
+            .and_then(|warp| warp.repeat_due_us(refresh_period_us(self.plan.display.refresh_hz), self.pacer.mode == PacingMode::BeamRace));
+        let due = match (due, repeat) {
+            (Some(due), Some(repeat)) => Some(due.min(repeat)),
+            (due, repeat) => due.or(repeat),
         };
         let wait = match due {
             Some(due) => {
@@ -317,6 +340,8 @@ impl Streaming {
                 return true;
             }
         }
+        // One shift for all of a frame's slices and its own present (`Presenter::draw`).
+        if let Some(warp) = self.frame_warp.as_mut() { self.texture.warp = warp.draw(Some(self.racer.seq())); }
         let flipped = self.render_flip(renderer, draw_overlay, true);
         self.needs_redraw = false;
         self.racer.presented(flipped.issued_us, &scan);
@@ -329,6 +354,25 @@ impl Streaming {
     #[cfg(not(windows))]
     fn present_slices(&mut self, _renderer: *mut SDL_Renderer, _draw_overlay: &mut impl FnMut(&mut Self, *mut SDL_Renderer), _now: u64) -> bool {
         false
+    }
+
+    /// Whether Frame Warp shows the held picture again now, its shift having moved
+    /// (`frame_warp::Repeat`): at most once a refresh, never into the refresh a picture that is
+    /// waiting or expected is due for, and not while slices race the beam (their frame keeps the
+    /// shift of its first slice).
+    fn warp_repeat(&mut self, now: u64) -> bool {
+        if self.frame_warp.is_none() || self.pacer.mode == PacingMode::BeamRace { return false; }
+        let next_picture_us = match (self.pacer.next_due(), self.skipped.due_us()) {
+            (Some(due), Some(skipped)) => Some(due.min(skipped)),
+            (due, skipped) => due.or(skipped),
+        };
+        let timing = frame_warp::Timing {
+            refresh_us: refresh_period_us(self.plan.display.refresh_hz),
+            vsync: self.pacer.mode == PacingMode::Vsync,
+            next_picture_us,
+        };
+        let frame_us = self.pacer.frame_us();
+        self.frame_warp.as_mut().is_some_and(|warp| warp.repeat_now(now, timing, frame_us))
     }
 
     /// The current picture through AI enhancement at `output`, or None to draw the picture itself:
@@ -402,7 +446,7 @@ impl Streaming {
     }
 
     /// Clears the window's target for a frame, black. On a PQ output, a frame that will draw only
-    /// the picture with the plane pass (`unscaled`, nothing of the overlay's) asks the patched SDL
+    /// the picture with the plane pass (`unscaled`) and what of the overlay's writes PQ too asks the patched SDL
     /// for a video-only frame (`present::VideoOnly`): SDL settles it on the frame's first run of
     /// commands on the window's target, which the flush of the clear is (a clear takes no swapchain
     /// image, so V-Sync's wait stays at the frame's first draw). The property is true only around
@@ -414,12 +458,16 @@ impl Streaming {
     #[cfg(target_os = "linux")]
     unsafe fn clear_window(&mut self, renderer: *mut SDL_Renderer, unscaled: bool) {
         let props = SDL_GetRendererProperties(renderer);
+        let pq_output = crate::sdl::output_decision() == Some(Ok(crate::handheld::Output::Pq));
+        let planes_direct = unscaled && self.texture.draws_planes_direct();
+        // What `draw_overlay` in app/overlay.rs draws: nothing, or egui meshes, which write PQ themselves
+        // (`ui_pq`) where a frame could be video only but for them.
+        let meshes = self.overlay_visible || self.toast.is_some() || self.menu_visible;
         let frame = present::VideoOnlyFrame {
-            pq_output: crate::sdl::output_decision() == Some(Ok(crate::handheld::Output::Pq)),
-            planes_direct: unscaled && self.texture.draws_planes_direct(),
-            // What `draw_overlay` in main.rs draws nothing for.
-            nothing_else: !self.overlay_visible && self.toast.is_none() && !self.menu_visible
-                && self.facts.role != nightjar_core::http::AppRole::InputOnly,
+            pq_output,
+            planes_direct,
+            nothing_else: self.facts.role != nightjar_core::http::AppRole::InputOnly
+                && (!meshes || (pq_output && planes_direct && self.texture.ui_draws_pq(renderer))),
             read_back: SDL_GetBooleanProperty(props, READ_BACK_PROPERTY.as_ptr(), false),
         };
         let (asked, line) = self.texture.video_only().wanted(frame, session::now_us());
@@ -446,6 +494,19 @@ impl Streaming {
     unsafe fn clear_window(&mut self, renderer: *mut SDL_Renderer, _unscaled: bool) {
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
         SDL_RenderClear(renderer);
+    }
+
+    /// The render state `draw_overlay` in app/overlay.rs hands egui's painter for this frame: null unless
+    /// the frame is video only on a PQ output, where SDL would drop its own draws (`ui_pq`).
+    #[cfg(target_os = "linux")]
+    pub fn ui_state(&mut self, renderer: *mut SDL_Renderer) -> *mut SDL_GPURenderState {
+        // SAFETY: the live renderer of the presenting thread.
+        unsafe { self.texture.ui_pq_state(renderer) }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn ui_state(&mut self, _renderer: *mut SDL_Renderer) -> *mut SDL_GPURenderState {
+        std::ptr::null_mut()
     }
 
     /// After a present: a video-only frame in which SDL dropped draws of its own holds video-only
@@ -489,9 +550,13 @@ impl Streaming {
                     if !self.upscaler.as_ref().is_some_and(|u| u.matches(input, output, self.settings.upscaling)) {
                         self.upscaler = upscale::Upscaler::new(renderer, input, output, self.settings.upscaling);
                     }
-                    match self.upscaler.as_ref().and_then(|u| u.draw(renderer, texture, self.settings.upscale_sharpness)) {
+                    // Frame Warp shifts the picture on its way into the upscaler, in the picture's own
+                    // pixels; the upscaled picture is drawn as it is.
+                    let warp = std::mem::take(&mut self.texture.warp);
+                    match self.upscaler.as_ref().and_then(|u| u.draw_warped(renderer, texture, self.settings.upscale_sharpness, &warp, &mut self.texture.warp_mesh)) {
                         Some(upscaled) => texture = upscaled,
                         None => {
+                            self.texture.warp = warp;
                             self.upscaler = None;
                             self.upscale_failed = true;
                             self.show_toast(tr("GPU upscaling is unavailable; using bilinear scaling."));
@@ -502,7 +567,7 @@ impl Streaming {
                     if texture == self.texture.texture { texture = self.texture.sdl_texture(renderer); }
                     // The video texture's alignment padding stays out of the picture.
                     let source = self.texture.source_rect(texture);
-                    SDL_RenderTexture(renderer, texture, source.as_ref().map_or(std::ptr::null(), |rect| rect as *const _), &dst);
+                    frame_warp::render_texture(renderer, texture, source.as_ref(), &dst, &self.texture.warp, &mut self.texture.warp_mesh);
                 }
             } else if !self.texture.draw(renderer, &dst) {
                 self.exit = Some(Exit::Ended(Some("Packed full-chroma presentation failed.".into())));
@@ -557,6 +622,7 @@ impl Streaming {
             done == present::NoWait::Refused
         };
         let returned_us = session::now_us();
+        if let Some(warp) = self.frame_warp.as_mut() { warp.presented(returned_us); }
         #[cfg(target_os = "linux")]
         {
             self.window_target.after_present(crate::sdl::window_target_frames(renderer));
@@ -581,7 +647,8 @@ impl Streaming {
         renderer: *mut SDL_Renderer,
         mut draw_overlay: impl FnMut(&mut Self, *mut SDL_Renderer),
     ) -> bool {
-        if self.texture.needs_hdr_output() && !crate::sdl::hdr_available(renderer) {
+        // A display plane shows HDR itself, whatever the renderer's swapchain takes.
+        if self.texture.needs_hdr_output() && !self.kms_usable() && !crate::sdl::hdr_available(renderer) {
             self.texture.destroy();
             self.exit = Some(Exit::Ended(Some("HDR presentation stopped because the current display/swapchain no longer supports HDR.".into())));
             self.needs_redraw = true;
@@ -589,7 +656,8 @@ impl Streaming {
         self.sync_race(renderer);
         self.sync_vrr(renderer);
         // The slices of a frame still being received go out ahead of the beam.
-        let sliced = self.present_slices(renderer, &mut draw_overlay, session::now_us());
+        // Slices are drawn by the renderer, which a display plane's pictures pass by.
+        let sliced = !self.kms_engaged() && self.present_slices(renderer, &mut draw_overlay, session::now_us());
         let now = session::now_us();
         let overdue = self.skipped.take_due(now);
         let (picture, mut dropped) = self.pacer.take_due(now);
@@ -604,7 +672,8 @@ impl Streaming {
         self.window.dropped_pacing += dropped;
         self.shared.counters.replaced.fetch_add(u64::from(dropped), Ordering::Relaxed);
         let has_picture = picture.is_some();
-        if !has_picture && !self.needs_redraw {
+        // Without a picture or a redraw, Frame Warp may show the held picture again, shifted anew.
+        if !has_picture && !self.needs_redraw && (sliced || !self.warp_repeat(now)) {
             return sliced;
         }
         let begin = session::now_us();
@@ -635,7 +704,7 @@ impl Streaming {
                     rows = race::scissor(first, end, p.decoded.setup.height as u32);
                 }
             }
-            if !self.texture.upload(renderer, &p.decoded, rows) {
+            if !self.scan_out(&p.decoded) && !self.texture.upload(renderer, &p.decoded, rows) {
                 if p.decoded.setup.format & VIDEO_FORMAT_MASK_PYROWAVE != 0 {
                     let reason = self.texture.failure.take().unwrap_or_else(|| "PyroWave GPU reconstruction failed.".into());
                     self.exit = Some(Exit::Ended(Some(reason)));
@@ -656,7 +725,15 @@ impl Streaming {
         }
         #[cfg(target_os = "linux")]
         if let Some(p) = &picture { self.glass.next_picture(p.decoded.number, p.decoded.ready_us); }
-        let flipped = self.render_flip(renderer, &mut draw_overlay, has_picture);
+        // Frame Warp's shift for the picture, as late before its draw as it can be.
+        if let Some(warp) = self.frame_warp.as_mut() {
+            if let Some(p) = &picture { warp.picture(p.decoded.number, p.decoded.race_seq, p.decoded.ready_us); }
+            self.texture.warp = warp.draw(None);
+        }
+        let flipped = match self.kms_flip(&mut draw_overlay) {
+            Some(flipped) => flipped,
+            None => self.render_flip(renderer, &mut draw_overlay, has_picture),
+        };
         self.needs_redraw = false;
         // The pictures the compositor answered for: the doctor's display time runs to the glass.
         #[cfg(target_os = "linux")]
@@ -700,7 +777,9 @@ impl Streaming {
             let timeline = self.finish_frame(&p.decoded, raced, flipped.issued_us, flipped.returned_us);
             let w = &mut self.window;
             w.shown += 1;
-            w.render_us += presented - begin;
+            let (drawing, present_call) = frame_shares(begin, flipped.issued_us, flipped.returned_us);
+            w.render_us += drawing;
+            w.present_us += present_call;
             w.hold_us += p.hold_us;
             w.late += u32::from(p.late);
             w.network_us += p.decoded.enqueue_us.saturating_sub(p.decoded.receive_us);
@@ -741,8 +820,85 @@ impl Streaming {
                     w.latency_n += 1;
                 }
             }
+            // A picture on a display plane stays out of the decoder's pool while it shows.
+            #[cfg(target_os = "linux")]
+            if let Some(kms) = self.kms.as_mut().filter(|kms| kms.engaged()) {
+                kms.keep(p);
+            }
         }
         true
+    }
+
+    /// Whether a display plane may still take the pictures (`kms_scanout`).
+    fn kms_usable(&self) -> bool {
+        #[cfg(target_os = "linux")]
+        return self.kms.as_ref().is_some_and(kms_scanout::Scanout::usable);
+        #[cfg(not(target_os = "linux"))]
+        false
+    }
+
+    /// Readies `decoded` for a display plane instead of the video texture; false leaves it to the
+    /// renderer, as before, with a notice the first time the planes give up.
+    #[cfg(target_os = "linux")]
+    fn scan_out(&mut self, decoded: &pipeline::Decoded) -> bool {
+        let Some(kms) = self.kms.as_mut().filter(|kms| kms.usable()) else { return false };
+        let (scaling, top) = (self.settings.video_scaling, self.settings.align_video_top);
+        let result = match self.texture.scanout_hdr(decoded) {
+            Ok(hdr) => kms.prepare(decoded, hdr, |picture, area| {
+                let r = viewport(picture, area, scaling, top);
+                (r.x, r.y, r.w, r.h)
+            }),
+            Err(why) => {
+                kms.give_up(&why);
+                Err(why)
+            }
+        };
+        if result.is_err() {
+            // Often right after the start notice (the first picture): it joins it, not replaces it.
+            self.add_toast(tr("Video planes are unavailable; the stream is drawn by the renderer. The log says why."));
+            self.needs_redraw = true;
+        }
+        result.is_ok()
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn scan_out(&mut self, _decoded: &pipeline::Decoded) -> bool {
+        false
+    }
+
+    /// Shows the readied picture on its display plane, the overlay drawn into its own plane above
+    /// it, in one commit; None while the planes do not show the stream, or when they just gave up
+    /// (then the renderer draws this frame).
+    #[cfg(target_os = "linux")]
+    fn kms_flip(&mut self, draw_overlay: &mut impl FnMut(&mut Self, *mut SDL_Renderer)) -> Option<Flipped> {
+        if !self.kms_engaged() {
+            return None;
+        }
+        // What `draw_overlay` in main.rs draws something for.
+        let meshes = self.overlay_visible || self.toast.is_some() || self.menu_visible;
+        match self.kms.as_mut().and_then(|kms| kms.overlay_renderer().filter(|_| meshes)) {
+            Some(overlay) => {
+                draw_overlay(self, overlay);
+                if let Some(kms) = self.kms.as_mut() { kms.overlay_drawn(); }
+            }
+            None => {
+                if let Some(kms) = self.kms.as_mut() { kms.overlay_hidden(); }
+            }
+        }
+        let issued_us = session::now_us();
+        let committed = self.kms.as_mut().map_or(Ok(()), kms_scanout::Scanout::commit);
+        let returned_us = session::now_us();
+        if committed.is_err() {
+            self.add_toast(tr("Video planes are unavailable; the stream is drawn by the renderer. The log says why."));
+            self.needs_redraw = true;
+            return None;
+        }
+        Some(Flipped { issued_us, returned_us, scan: None, refused: false })
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn kms_flip(&mut self, _draw_overlay: &mut impl FnMut(&mut Self, *mut SDL_Renderer)) -> Option<Flipped> {
+        None
     }
 
     /// A frame is on the screen: closes it in the racer, teaches the predictor its slice times and
@@ -777,6 +933,16 @@ impl Streaming {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The overlay's Render ends where the present call begins: a V-Sync wait or a compositor's
+    /// layer inside the call is the system's share, not Nightjar's drawing.
+    #[test]
+    fn a_frames_drawing_ends_at_the_present_call() {
+        assert_eq!(super::frame_shares(1_000, 1_600, 9_900), (600, 8_300));
+        assert_eq!(super::frame_shares(1_000, 1_000, 1_000), (0, 0));
+        // Clocks that step back count nothing rather than wrap.
+        assert_eq!(super::frame_shares(2_000, 1_500, 1_400), (0, 0));
+    }
 
     /// `pump`'s crop over a stream: pictures of `coded` size arriving at `t0 + ms`, with `asked`
     /// pending since `asked_ms` until a picture confirms it, as `pump` clears it. Returns each

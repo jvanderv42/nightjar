@@ -83,7 +83,8 @@ final class RustBridge {
                                       boolean networkPriority, boolean roaming, boolean roamingMetered,
                                       int audioPassthrough, int hdrFormat, int videoFecPercentage,
                                       boolean pyrowaveEarly, boolean codecDirect,
-                                      boolean receiveDecodePriority);
+                                      boolean receiveDecodePriority, boolean frameWarpRequested,
+                                      boolean receiveCoalescing);
     static native void stopConnection();
     static native void interruptConnection();
     static native int networkChanged(boolean metered);
@@ -98,6 +99,13 @@ final class RustBridge {
     static native void sendMultiControllerInput(short controllerNumber, short activeGamepadMask, int buttonFlags, byte leftTrigger, byte rightTrigger, short leftStickX, short leftStickY, short rightStickX, short rightStickY);
     static native int sendTouchEvent(byte eventType, int pointerId, float x, float y, float pressure, float contactAreaMajor, float contactAreaMinor, short rotation);
     static native int sendPenEvent(byte eventType, byte toolType, byte penButtons, float x, float y, float pressure, float contactAreaMajor, float contactAreaMinor, short rotation, byte tilt);
+    static native int sendControllerIdentityEvent(byte controllerNumber, int vendorId, int productId);
+    /** How the host takes a physical touchpad's fingers: {@link MoonBridge#TOUCHPAD_NONE}, _INDIVIDUAL or _FRAME. */
+    static native int touchpadTransport();
+    /** One motion event of a physical touchpad: the first {@code count} fingers on it, positions 0-1 on its surface. */
+    static native int touchpadFrame(int device, int[] ids, float[] xs, float[] ys, float[] pressures, int count,
+                                    boolean button, short widthMm, short heightMm);
+    static native int touchpadCancel();
     static native int sendControllerArrivalEvent(byte controllerNumber, short activeGamepadMask, byte type, int supportedButtonFlags, short capabilities);
     static native int sendControllerTouchEvent(byte controllerNumber, byte eventType, int pointerId, float x, float y, float pressure);
     static native int sendControllerMotionEvent(byte controllerNumber, byte motionType, float x, float y, float z);
@@ -119,6 +127,16 @@ final class RustBridge {
     static native void flushPhaseLockReport();
     static native int getPhaseLockLeadUs();
     static native boolean hostSupportsControlMessage(int messageType);
+    // Frame Warp (protocol/android/src/frame_warp.rs); MoonBridge has what they mean.
+    static native boolean frameWarpOffered();
+    static native long frameWarpApi();
+    static native void frameWarpNoteFrame(long ptsUs, int frame);
+    static native int frameWarpForPts(long ptsUs, float[] out);
+    static native int frameWarpPeekForPts(long ptsUs, float[] out);
+    static native long frameWarpInputState();
+    static native int frameWarpMask(int known, int[] size, byte[] cells);
+    static native void frameWarpDecline();
+    static native int frameWarpStatus(float[] out);
     static native boolean sendDisplayCaps(boolean hdr, float maxNits, float maxAverageNits, float minNits);
     static native int getMicrophoneState();
     static native int getHostPacked444Modes();
@@ -128,7 +146,7 @@ final class RustBridge {
     static native boolean sendHostTimingRequest(boolean enabled);
     static native boolean sendLinkNoticeRequest(boolean enabled);
     static native boolean sendClockSyncProbe();
-    static native void presentClockStart(int minIntervalUs);
+    static native void presentClockStart(int minIntervalUs, boolean adaptive);
     static native void presentClockStop();
     static native void presentClockReset();
     static native boolean presentClockSchedule(long hostUs, long readyNs, long[] out);

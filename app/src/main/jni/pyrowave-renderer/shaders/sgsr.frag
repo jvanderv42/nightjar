@@ -19,6 +19,9 @@ layout(push_constant) uniform Params {
     int fullRange;
     int rotationQuarterTurns;
 } params;
+#ifdef FRAME_WARP
+#include "frame_warp.glsl"
+#endif
 
 vec2 planeCoord(vec2 p) {
     p = clamp(p, 0.5 * params.viewportInfo.xy, vec2(1.0) - 0.5 * params.viewportInfo.xy);
@@ -56,6 +59,10 @@ vec2 weightY(float dx, float dy, float c, float std) {
 
 void main() {
     vec2 sourceUv = pyroSourceUv(v_uv, params.rotationQuarterTurns);
+#ifdef FRAME_WARP
+    float warpFade;
+    sourceUv = frameWarpUv(sourceUv, warpFade);
+#endif
     vec2 uv = vec2(sourceUv.x, 1.0 - sourceUv.y);
     vec3 rgb = loadColor(uv);
     float centerY = expandY(texture(u_y, planeCoord(uv)).r);
@@ -99,5 +106,8 @@ void main() {
         float deltaY = clamp(finalY - center, -23.0 / 255.0, 23.0 / 255.0);
         rgb = clamp(rgb + deltaY, 0.0, 1.0);
     }
+#ifdef FRAME_WARP
+    rgb *= warpFade;
+#endif
     color = vec4(rgb, 1.0);
 }

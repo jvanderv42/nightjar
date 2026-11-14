@@ -28,6 +28,7 @@ import org.robolectric.shadows.ShadowDisplay;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 /** Adaptive refresh is offered only where a screen has ARR; elsewhere it is greyed and reads as off. */
@@ -78,19 +79,22 @@ public class VrrOfferedTest {
     }
 
     @Test
-    public void withoutArrTheSettingIsGreyedOffAndSaysWhy() {
+    public void withoutArrTheSettingIsHiddenAndPacingShows() {
         prefs().edit().putBoolean(PreferenceConfiguration.VRR_PREF_STRING, true).commit();
         try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
             StreamSettings.SettingsFragment display = SettingsStructureTest.open(controller.get(), "display");
-            SwitchPreference vrr = (SwitchPreference) display.findPreference(PreferenceConfiguration.VRR_PREF_STRING);
-            assertFalse(vrr.isEnabled());
-            assertFalse(vrr.isChecked());
-            assertEquals(controller.get().getString(R.string.summary_vrr_unavailable), String.valueOf(vrr.getSummary()));
-            assertTrue("frame pacing applies again", display.findPreference("frame_pacing").isEnabled());
-            assertTrue("so does the lower refresh rate", display.findPreference("checkbox_reduce_refresh_rate").isEnabled());
-            // Another setting's change reruns the rules; the stored VRR choice still doesn't grey pacing.
+            // Shown only where it works: no greyed row and no sentence.
+            assertNull(display.findPreference(PreferenceConfiguration.VRR_PREF_STRING));
+            java.util.List<String> shown = new java.util.ArrayList<>();
+            android.preference.PreferenceScreen screen = display.getPreferenceScreen();
+            for (int i = 0; i < screen.getPreferenceCount(); i++) {
+                shown.addAll(SettingsStructureTest.keys((android.preference.PreferenceGroup) screen.getPreference(i)));
+            }
+            assertTrue("frame pacing applies again", shown.contains("frame_pacing"));
+            assertTrue("so does the lower refresh rate", shown.contains("checkbox_reduce_refresh_rate"));
+            // Another setting's change reruns the rules; the stored VRR choice still doesn't hide pacing.
             prefs().edit().putBoolean(PreferenceConfiguration.HOST_FRAME_TIMES_PREF_STRING, false).commit();
-            assertTrue(display.findPreference("frame_pacing").isEnabled());
+            assertTrue(SettingRules.framePacingApplies(controller.get(), prefs()));
         }
         assertTrue("opening Settings keeps the saved choice for a screen that gains ARR",
                 prefs().getBoolean(PreferenceConfiguration.VRR_PREF_STRING, false));
@@ -116,6 +120,64 @@ public class VrrOfferedTest {
         ArrDisplay.supported = true;
         assertTrue(stream("vrr-pc", "desktop").vrr);
         assertTrue(stream("plain-pc", "game").vrr);
+    }
+
+    @Test
+    public void realVrrIsOnWithVrrAndTheFixedRefreshSwitchKeepsItsOwnChoice() {
+        Application app = RuntimeEnvironment.getApplication();
+        ArrDisplay.supported = true;
+        assertFalse("without VRR the fixed refresh's switch decides, off by default",
+                PreferenceConfiguration.readPreferences(app).hostFrameTimes);
+        // The old switch's off, which first launches stored as its default, doesn't turn Real VRR off.
+        prefs().edit().putBoolean(PreferenceConfiguration.VRR_PREF_STRING, true)
+                .putBoolean(PreferenceConfiguration.HOST_FRAME_TIMES_PREF_STRING, false).commit();
+        PreferenceConfiguration config = PreferenceConfiguration.readPreferences(app);
+        assertTrue("Real VRR is the default with VRR", config.hostFrameTimes);
+        assertEquals(PreferenceConfiguration.FRAME_PACING_MIN_LATENCY, config.framePacing);
+        prefs().edit().putBoolean(PreferenceConfiguration.REAL_VRR_PREF_STRING, false).commit();
+        assertFalse(PreferenceConfiguration.readPreferences(app).hostFrameTimes);
+        prefs().edit().putBoolean(PreferenceConfiguration.VRR_PREF_STRING, false)
+                .putBoolean(PreferenceConfiguration.HOST_FRAME_TIMES_PREF_STRING, true).commit();
+        assertTrue(PreferenceConfiguration.readPreferences(app).hostFrameTimes);
+        // A saved VRR reads as off without ARR, so the fixed refresh's switch decides there.
+        prefs().edit().putBoolean(PreferenceConfiguration.VRR_PREF_STRING, true)
+                .putBoolean(PreferenceConfiguration.REAL_VRR_PREF_STRING, true)
+                .putBoolean(PreferenceConfiguration.HOST_FRAME_TIMES_PREF_STRING, false).commit();
+        ArrDisplay.supported = false;
+        assertFalse(PreferenceConfiguration.readPreferences(app).hostFrameTimes);
+    }
+
+    @Test
+    public void aPcOrGameLayerThatTurnsVrrOnOrOffPicksTheMatchingSwitch() {
+        Application app = RuntimeEnvironment.getApplication();
+        ArrDisplay.supported = true;
+        HostStreamProfile.deserialize("v2;vrr=true").save(app, "vrr-pc");
+        HostStreamProfile.deserialize("v2;vrr=false").save(app, "flat-pc");
+        PreferenceConfiguration config = stream("vrr-pc", "desktop");
+        assertTrue("a PC that turns VRR on gets Real VRR", config.vrr && config.hostFrameTimes);
+        prefs().edit().putBoolean(PreferenceConfiguration.VRR_PREF_STRING, true)
+                .putString(PreferenceConfiguration.FRAME_PACING_PREF_STRING, "balanced").commit();
+        assertTrue(PreferenceConfiguration.readPreferences(app).hostFrameTimes);
+        config = stream("flat-pc", "desktop");
+        assertFalse("a PC that turns VRR off gets the fixed refresh's switch", config.vrr || config.hostFrameTimes);
+        assertEquals("and its pacing back", PreferenceConfiguration.FRAME_PACING_BALANCED, config.framePacing);
+    }
+
+    @Test
+    public void realVrrShowsWithVrrAndTheFixedRefreshSwitchWithout() {
+        ArrDisplay.supported = true;
+        try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
+            // The screen holds only the rows shown; the fragment also finds the hidden ones.
+            android.preference.PreferenceScreen display =
+                    SettingsStructureTest.open(controller.get(), "display").getPreferenceScreen();
+            assertNull(display.findPreference(PreferenceConfiguration.REAL_VRR_PREF_STRING));
+            assertTrue(display.findPreference(PreferenceConfiguration.HOST_FRAME_TIMES_PREF_STRING) != null);
+            prefs().edit().putBoolean(PreferenceConfiguration.VRR_PREF_STRING, true).commit();
+            assertTrue(display.findPreference(PreferenceConfiguration.REAL_VRR_PREF_STRING) != null);
+            assertNull(display.findPreference(PreferenceConfiguration.HOST_FRAME_TIMES_PREF_STRING));
+            assertTrue("on by default", ((SwitchPreference) display.findPreference(
+                    PreferenceConfiguration.REAL_VRR_PREF_STRING)).isChecked());
+        }
     }
 
     private static PreferenceConfiguration stream(String pc, String game) {

@@ -366,6 +366,11 @@ impl PinLock {
     }
 
     fn cancel(&mut self, commands: &mut Vec<Command>) {
+        // A PIN being saved is saved either way; the pad stays for its result, which
+        // turns the lock on and says so.
+        if self.job.is_some() && self.pad.as_ref().is_some_and(|pad| matches!(pad.purpose, Purpose::Confirm(_))) {
+            return;
+        }
         let Some(pad) = self.pad.take() else { return };
         if let Purpose::Stream { .. } = pad.purpose {
             commands.push(Command::PinCancelled);
@@ -584,7 +589,7 @@ impl PinLock {
                 if view.has_pin {
                     self.lock_rows(ui, &view, pcs);
                     ui.add_space(space::M);
-                    ui.label(RichText::new(tr("If you forget the PIN, the only way to reset it is to delete pin_lock.json in Nightjar's settings folder, next to settings.json.")).font(regular(text::CAPTION)).color(ON_SURFACE_VARIANT));
+                    ui.label(RichText::new(tr("If you forget the PIN, the only way to reset it is to delete pin_lock.json in Nightjar’s settings folder, next to settings.json.")).font(regular(text::CAPTION)).color(ON_SURFACE_VARIANT));
                 }
             });
         });

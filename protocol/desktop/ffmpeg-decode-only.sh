@@ -3,17 +3,18 @@
 #
 #   protocol/desktop/ffmpeg-decode-only.sh <ffmpeg source dir> <prefix>
 #
-# Windows: run it in an MSYS2 UCRT64 shell (gcc, make, nasm, pkgconf, mingw-w64-ucrt-x86_64-dav1d).
+# Windows: run it in an MSYS2 UCRT64 shell (gcc, make, nasm, pkgconf, mingw-w64-ucrt-x86_64-dav1d), or
+# for ARM64 in a CLANGARM64 one (clang, make, pkgconf, mingw-w64-clang-aarch64-dav1d).
 # Linux: gcc, make, nasm, pkg-config, libdav1d-dev, libva-dev, libdrm-dev, libffmpeg-nvenc-dev and
 # libvulkan-dev 1.3.277 or newer (Debian and Ubuntu names; nv-codec-headers and vulkan-headers
-# elsewhere). Where dav1d or the NVIDIA or Vulkan headers are older than FFmpeg 8 accepts
+# elsewhere). Where dav1d or the NVIDIA or Vulkan headers are older than FFmpeg 9 accepts
 # (Ubuntu 22.04), ffmpeg-deps-linux.sh builds or installs them into a prefix: put its
 # lib/pkgconfig on PKG_CONFIG_PATH.
 # The result is libavcodec and libavutil only, with the H.264, HEVC and AV1 decoders, their
 # hardware paths (D3D11VA and DXVA2 on Windows; VAAPI, Vulkan video, NVDEC and the V4L2
 # memory-to-memory decoders on Linux) and dav1d: no encoders, muxers,
 # filters, swscale, swresample, or programs. It has the same sonames as the distributions'
-# FFmpeg 8, so `NIGHTJAR_FFMPEG_DIR=<prefix>` builds nightjar against it. On Windows, Opus (and its
+# FFmpeg 9, so `NIGHTJAR_FFMPEG_DIR=<prefix>` builds nightjar against it. On Windows, Opus (and its
 # header) is copied into the prefix next to it. On Linux the libraries get the run path $ORIGIN, so
 # libavcodec finds libavutil and libdav1d (copied into the prefix) in the folder it is in, and the
 # prefix's lib/ is what the package ships.
@@ -53,16 +54,23 @@ else
     --enable-hwaccel=h264_d3d11va,h264_d3d11va2,hevc_d3d11va,hevc_d3d11va2,av1_d3d11va,av1_d3d11va2
     --enable-hwaccel=h264_dxva2,hevc_dxva2,av1_dxva2
   )
+  # MSYS2's own tools are x86_64 programs, emulated on an ARM64 PC, so `uname -m` would have
+  # configure build for x86_64: name the architecture and CLANGARM64's compiler (it has no gcc).
+  # The NEON assembly stays on, as the x86_64 build keeps its nasm code.
+  if [[ ${MSYSTEM:-} == CLANGARM64 ]]; then
+    platform+=(--arch=aarch64 --cc=clang --cxx=clang++)
+  fi
 fi
 
-# Nightjar's changes to FFmpeg (Linux only, they touch the V4L2 decoders); a second run on the same
-# source finds them applied.
+# Nightjar's changes to FFmpeg: ffmpeg-patches/ on Linux (the V4L2 decoders), ffmpeg-patches/windows/
+# on Windows (D3D11VA and DXVA2 HEVC 4:4:4, Moonlight's, which FFmpeg 9 lacks: without it HEVC
+# 4:4:4 has no hardware path on Windows, Rubylight issue 84). A second run on the same source finds
+# them applied.
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-if [[ -n $linux ]]; then
-  for change in "$here"/ffmpeg-patches/*.patch; do
-    patch -d "$source_dir" -p1 -R --dry-run -f <"$change" >/dev/null 2>&1 || patch -d "$source_dir" -p1 -f <"$change"
-  done
-fi
+if [[ -n $linux ]]; then patches=("$here"/ffmpeg-patches/*.patch); else patches=("$here"/ffmpeg-patches/windows/*.patch); fi
+for change in "${patches[@]}"; do
+  patch -d "$source_dir" -p1 -R --dry-run -f <"$change" >/dev/null 2>&1 || patch -d "$source_dir" -p1 -f <"$change"
+done
 
 build=$(mktemp -d)
 cd "$build"
@@ -77,6 +85,14 @@ cd "$build"
   --enable-decoder=h264,hevc,av1 --enable-parser=h264,hevc,av1 \
   --enable-libdav1d --enable-decoder=libdav1d \
   "${platform[@]}"
+if [[ -z $linux ]]; then
+  # The patched HEVC hwaccels need DXVA_PicParams_HEVC_RangeExt (MinGW-w64 13 headers or newer);
+  # without it configure drops them, and with them every HEVC picture, silently to software.
+  for hwaccel in HEVC_D3D11VA HEVC_D3D11VA2 HEVC_DXVA2; do
+    grep -q "^#define CONFIG_${hwaccel}_HWACCEL 1" config_components.h ||
+      { echo "configure left out the ${hwaccel,,} hwaccel: these MinGW headers lack DXVA_PicParams_HEVC_RangeExt (update mingw-w64-ucrt-x86_64-headers)" >&2; exit 1; }
+  done
+fi
 make -j"$jobs"
 make install
 
@@ -85,8 +101,8 @@ make install
 mkdir -p "$prefix/licenses-ffmpeg" "$prefix/licenses-dav1d"
 cp "$source_dir/COPYING.LGPLv2.1" "$source_dir/LICENSE.md" "$prefix/licenses-ffmpeg/"
 ffmpeg_release=$(cat "$source_dir/RELEASE")
-built=unmodified
-[[ -z $linux ]] || built="with the .patch files in this folder applied"
+built="with the .patch files in this folder applied"
+cp "${patches[@]}" "$prefix/licenses-ffmpeg/"
 cat >"$prefix/licenses-ffmpeg/SOURCE.txt" <<EOF
 FFmpeg $ffmpeg_release, LGPL v2.1 or later, linked dynamically (libavcodec and libavutil).
 Source: https://ffmpeg.org/releases/ffmpeg-$ffmpeg_release.tar.xz
@@ -99,7 +115,6 @@ if [[ -n $linux ]]; then
   # The VAAPI to Vulkan mapping needs libavutil built with libdrm; under --disable-autodetect
   # nothing else would notice a configure line that lost --enable-libdrm.
   readelf -d "$prefix/lib/libavutil.so" | grep -q 'NEEDED.*\[libdrm\.so' || { echo "libavutil.so does not link libdrm (apt install libdrm-dev)" >&2; exit 1; }
-  cp "$here"/ffmpeg-patches/*.patch "$prefix/licenses-ffmpeg/"
   for lib in "$prefix"/lib/lib*.so.*.*; do
     readelf -d "$lib" | grep -Eq '(RPATH|RUNPATH).*\[\$ORIGIN\]' || { echo "${lib##*/} has no run path \$ORIGIN" >&2; exit 1; }
   done

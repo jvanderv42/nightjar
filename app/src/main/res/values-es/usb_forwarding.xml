@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="title_usb_forwarding">Redirigir dispositivos USB</string>
-    <string name="summary_usb_forwarding">Añade los dispositivos USB al menú del stream: un dispositivo conectado a este, como una tableta de dibujo o una llave de seguridad, funciona entonces en el PC. Requiere un PC que ofrezca redirección USB.</string>
+    <string name="summary_usb_forwarding">Permite que el menú de transmisión pase al PC un dispositivo USB enchufado aquí, como una tableta gráfica o una llave de seguridad. Requiere un PC que ofrezca redirección USB.</string>
     <string name="stream_usb_devices">Dispositivos USB</string>
     <string name="usb_forwarding_pick_title">Redirigir un dispositivo USB</string>
+    <string name="usb_forwarding_auto_button">Automático</string>
+    <string name="usb_forwarding_auto_title">Reenviar siempre que se conecte</string>
     <string name="usb_forwarding_none">No hay ningún dispositivo USB para redirigir. No se muestran los hubs ni los mandos que esta app controla por sí misma.</string>
     <string name="usb_forwarding_detach">Desconectar %1$s</string>
     <string name="usb_forwarding_asking">Pidiendo al PC que conecte %1$s…</string>

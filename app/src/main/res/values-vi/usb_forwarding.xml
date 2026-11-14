@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="title_usb_forwarding">Chuyển tiếp thiết bị USB</string>
-    <string name="summary_usb_forwarding">Thêm thiết bị USB vào menu luồng: một thiết bị cắm vào máy này, như bảng vẽ hoặc khóa bảo mật, sẽ hoạt động trên PC. Cần PC hỗ trợ chuyển tiếp USB.</string>
+    <string name="summary_usb_forwarding">Cho phép menu stream chuyển một thiết bị USB cắm vào máy này, như bảng vẽ hoặc khóa bảo mật, sang PC. Cần PC có chuyển tiếp USB.</string>
     <string name="stream_usb_devices">Thiết bị USB</string>
     <string name="usb_forwarding_pick_title">Chuyển tiếp thiết bị USB</string>
+    <string name="usb_forwarding_auto_button">Tự động</string>
+    <string name="usb_forwarding_auto_title">Chuyển tiếp mỗi khi cắm vào</string>
     <string name="usb_forwarding_none">Không có thiết bị USB để chuyển tiếp. Hub và các tay cầm mà ứng dụng này tự điều khiển không được liệt kê.</string>
     <string name="usb_forwarding_detach">Ngắt %1$s</string>
     <string name="usb_forwarding_asking">Đang yêu cầu PC kết nối %1$s…</string>

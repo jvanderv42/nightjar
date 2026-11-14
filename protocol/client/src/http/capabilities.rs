@@ -46,6 +46,9 @@ pub enum Feature {
     HostTiming,
     WebUi,
     CursorShape,
+    /// Frame Warp (0x5543 to 0x5546): the host learns each game's camera response and tags
+    /// frames, so the client can shift pictures by input still in flight.
+    FrameWarp,
     /// The Rubylight native API (`/api/native/v1`): library, session actions, Radeon state.
     NativeApi,
     /// Sleep PC (`/power-actions/v1`, Vibepollo's wire format): suspend an idle host.
@@ -77,6 +80,9 @@ pub enum Feature {
     ClientKeyboardLayout,
     /// Pen barrel roll (input 0x5500000B).
     PenBarrelRoll,
+    /// Controller identities (input 0x55000080) and the C button: the host
+    /// can give a Switch 2 Pro Controller its own pad.
+    ControllerIdentity,
     /// Pipeline frame rates for the overlay (0x553D).
     PipelineRates,
     /// Dual screen mode (`SecondScreenVersion`): the host keeps a device's second stream
@@ -97,10 +103,13 @@ pub enum Feature {
     MicOnly,
     /// Moving the running game's stream to this device (`POST /session/continue-here`).
     ContinueHere,
+    /// Play over the internet (`RustHostInternetPlayVersion`): the host publishes rendezvous
+    /// records for its paired devices and answers hole punches (`/internet-play/v1`).
+    InternetPlay,
 }
 
 impl Feature {
-    pub const ALL: [Feature; 46] = [
+    pub const ALL: [Feature; 49] = [
         Feature::Permissions,
         Feature::OtpPairing,
         Feature::Clipboard,
@@ -126,6 +135,7 @@ impl Feature {
         Feature::HostTiming,
         Feature::WebUi,
         Feature::CursorShape,
+        Feature::FrameWarp,
         Feature::NativeApi,
         Feature::Sleep,
         Feature::FileUpload,
@@ -140,6 +150,7 @@ impl Feature {
         Feature::TextInput,
         Feature::ClientKeyboardLayout,
         Feature::PenBarrelRoll,
+        Feature::ControllerIdentity,
         Feature::PipelineRates,
         Feature::SecondScreen,
         Feature::ImageClipboard,
@@ -147,6 +158,7 @@ impl Feature {
         Feature::Coop,
         Feature::MicOnly,
         Feature::ContinueHere,
+        Feature::InternetPlay,
     ];
 }
 
@@ -234,6 +246,7 @@ pub struct Evidence {
     pub controller_preparation: bool,
     pub current_game_uuid: bool,
     pub cursor_shape_version: i32,
+    pub frame_warp_version: i32,
     /// -1 when the host has no native API, 0 when it has one but not for this request (plain
     /// HTTP or an unpaired certificate), 1 or more for the highest version it serves.
     pub native_api_version: i32,
@@ -263,12 +276,19 @@ pub struct Evidence {
     pub text_input_version: i32,
     pub keyboard_layout_version: i32,
     pub pen_barrel_roll_version: i32,
+    pub controller_identity_version: i32,
     pub pipeline_rates_version: i32,
     /// -1 without `DisplayScaleVersion`: the host ignores `rlDisplayScale`.
     pub display_scale_version: i32,
     /// -1 without `SecondScreenVersion`: the host ends the first stream when a second one of the
     /// device starts.
     pub second_screen_version: i32,
+    /// The image enhancements the host runs before encoding (`NvidiaEnhancements`,
+    /// `rubylight_protocol::nvidia_enhance` bits); 0 for none.
+    pub nvidia_enhancements: u8,
+    /// -1 without `RustHostInternetPlayVersion` (paired serverinfo only), 0 when the host has
+    /// Play over the internet off.
+    pub internet_play_version: i32,
     /// `usb`, `clipboard.image` and `folders` in the native features, and the device's `usb`
     /// and `shared_folders` permissions.
     pub usb_offered: bool,
@@ -359,6 +379,7 @@ impl Evidence {
             hardware_metrics_version: -1,
             network_path_version: -1,
             cursor_shape_version: -1,
+            frame_warp_version: -1,
             native_api_version: -1,
             power_action_version: -1,
             hdr_formats: -1,
@@ -369,9 +390,12 @@ impl Evidence {
             text_input_version: -1,
             keyboard_layout_version: -1,
             pen_barrel_roll_version: -1,
+            controller_identity_version: -1,
             pipeline_rates_version: -1,
             display_scale_version: -1,
             second_screen_version: -1,
+            nvidia_enhancements: 0,
+            internet_play_version: -1,
             ..Default::default()
         };
         let (mut encoder, mut initial_encoder) = (false, false);
@@ -406,6 +430,7 @@ impl Evidence {
                 "NetworkPathVersion" => e.network_path_version = i32::from(text.trim() == "1"),
                 "ControllerPreparation" => e.controller_preparation = text.trim() == "1",
                 "CursorShapeVersion" => e.cursor_shape_version = unsigned(&text, 0xFFFF) as i32,
+                "FrameWarpVersion" => e.frame_warp_version = unsigned(&text, 0xFFFF) as i32,
                 "HdrFormats" => e.hdr_formats = unsigned(&text, 0xFF) as i32,
                 "FecControlVersion" => e.fec_control_version = unsigned(&text, 0xFFFF) as i32,
                 "BandwidthProbeVersion" => {
@@ -420,9 +445,19 @@ impl Evidence {
                 "PenBarrelRollVersion" => {
                     e.pen_barrel_roll_version = unsigned(&text, 0xFFFF) as i32
                 }
+                "ControllerIdentityVersion" => {
+                    e.controller_identity_version = unsigned(&text, 0xFFFF) as i32
+                }
                 "PipelineRatesVersion" => e.pipeline_rates_version = unsigned(&text, 0xFFFF) as i32,
                 "DisplayScaleVersion" => e.display_scale_version = unsigned(&text, 0xFFFF) as i32,
                 "SecondScreenVersion" => e.second_screen_version = unsigned(&text, 0xFFFF) as i32,
+                "NvidiaEnhancements" => {
+                    e.nvidia_enhancements =
+                        rubylight_protocol::nvidia_enhance::parse_offer(Some(&text))
+                }
+                "RustHostInternetPlayVersion" => {
+                    e.internet_play_version = unsigned(&text, 0xFFFF) as i32
+                }
                 "NativeApiVersion" => e.native_api_version = unsigned(&text, 0xFFFF) as i32,
                 "PowerActionVersion" => e.power_action_version = unsigned(&text, 0xFFFF) as i32,
                 "SleepSupported" => e.sleep_supported = flag(&text) == Some(true),
@@ -747,6 +782,13 @@ impl Evidence {
                     self.absent(false)
                 }
             }
+            Feature::FrameWarp => {
+                if self.frame_warp_version >= 1 {
+                    Supported
+                } else {
+                    self.absent(false)
+                }
+            }
             // The host reports 0 over plain HTTP and to an unpaired certificate.
             Feature::NativeApi => {
                 if self.native_api_version == -1 {
@@ -826,8 +868,12 @@ impl Evidence {
             Feature::TextInput => self.serverinfo_version(self.text_input_version),
             Feature::ClientKeyboardLayout => self.serverinfo_version(self.keyboard_layout_version),
             Feature::PenBarrelRoll => self.serverinfo_version(self.pen_barrel_roll_version),
+            Feature::ControllerIdentity => {
+                self.serverinfo_version(self.controller_identity_version)
+            }
             Feature::PipelineRates => self.serverinfo_version(self.pipeline_rates_version),
             Feature::SecondScreen => self.serverinfo_version(self.second_screen_version),
+            Feature::InternetPlay => self.serverinfo_version(self.internet_play_version),
             Feature::UsbForwarding => {
                 let refused = (!self.usb_permission).then_some(Reason::UsbPermission);
                 self.native_feature(self.usb_offered, refused)
@@ -954,6 +1000,12 @@ impl HostCapabilities {
 
     pub fn has(&self, feature: Feature) -> bool {
         self.availability(feature).is_supported()
+    }
+
+    /// The image enhancements the host offers to turn on or off per stream
+    /// (`rubylight_protocol::nvidia_enhance` bits), 0 for a host without any.
+    pub fn nvidia_enhancements(&self) -> u8 {
+        self.evidence.as_ref().map_or(0, |e| e.nvidia_enhancements)
     }
 
     /// Supported or not known yet: for behavior that does no harm on a host without it.
@@ -1092,6 +1144,13 @@ mod tests {
             ("PipelineRatesVersion", Feature::PipelineRates, &[("1", true), ("", false)]),
             // Only a host that says so keeps a device's second stream beside its first.
             ("SecondScreenVersion", Feature::SecondScreen, &[("1", true), ("2", true), ("0", false), ("x", false)]),
+            // A host with Play over the internet off says 0.
+            ("RustHostInternetPlayVersion", Feature::InternetPlay, &[("1", true), ("0", false), ("", false)]),
+            ("BandwidthProbeVersion", Feature::BandwidthProbe, &[("1", true), ("0", false), ("x", false)]),
+            ("TextInputVersion", Feature::TextInput, &[("1", true), ("0", false), ("x", false)]),
+            ("KeyboardLayoutVersion", Feature::ClientKeyboardLayout, &[("1", true), ("0", false), ("x", false)]),
+            ("PenBarrelRollVersion", Feature::PenBarrelRoll, &[("1", true), ("0", false), ("x", false)]),
+            ("ControllerIdentityVersion", Feature::ControllerIdentity, &[("1", true), ("0", false), ("x", false)]),
         ] {
             for &(value, supported) in cases {
                 let expected = if supported { Availability::Supported } else { never };

@@ -13,7 +13,15 @@ cbuffer Draw : register(b0) {
     float2 picture; float2 textureSize;
     float slice; uint flags; float sdrWhite; float colorScale;
     float tonemap1; float tonemap2; float hlgPeak; float hlgGamma;
+    // Frame Warp (stream/frame_warp.rs): the shift in fractions of the picture, then the HUD
+    // mask's size in cells (0 for none). All zero draws the picture where it is. Then its lens
+    // terms (0, 0, 1, 1 for a flat picture).
+    float4 warp;
+    float4 warpLens;
 };
+// Frame Warp's HUD mask: byte x / 8 of row y holds cell x in bit x % 8.
+Texture2D<float> hudMask : register(t2);
+#include "frame_warp.hlsl"
 
 // flags: bit 0 10-bit, bit 1 full range, bits 2-3 matrix (0 BT.601, 1 BT.709, 2 BT.2020),
 // bit 4 PQ, bit 5 linear (scRGB) output, bit 6 tone map, bit 7 HLG.
@@ -65,6 +73,9 @@ static const float3x3 bt2020To709 = {
 };
 
 float4 draw(float4 position : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
+    // Frame Warp, in the texture's coordinates: the picture spans 0 to picture / textureSize.
+    float fade;
+    uv = frameWarp(uv, picture / textureSize, fade);
     // Keep the bilinear taps inside the picture: the decoder's surfaces are taller than it.
     float2 lumaAt = clamp(uv, 0.5 / textureSize, (picture - 0.5) / textureSize);
     float2 chromaAt = clamp(uv, 1.0 / textureSize, (picture - 1.0) / textureSize);
@@ -84,7 +95,7 @@ float4 draw(float4 position : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
         if (flag(5)) rgb = float3(srgbToLinear(rgb.r), srgbToLinear(rgb.g), srgbToLinear(rgb.b));
         rgb *= colorScale;
     }
-    return float4(rgb, 1);
+    return float4(rgb * fade, 1);
 }
 
 // A histogram of the PQ-coded maxRGB of every 4th pixel each way, 256 bins, for the peak the

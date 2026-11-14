@@ -1615,6 +1615,7 @@ dependencies = [
  "rsa",
  "rubylight-native-api 1.1.0",
  "rubylight-protocol 0.1.0",
+ "rubylight-traverse",
  "rustls",
  "rusty_enet",
  "serde",
@@ -1655,6 +1656,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "skrifa",
+ "sonora",
  "system-configuration",
  "ureq",
  "windows",
@@ -2427,6 +2429,14 @@ name = "rubylight-protocol-ffi"
 version = "0.1.0"
 dependencies = [
  "rubylight-protocol 0.1.0",
+]
+
+[[package]]
+name = "rubylight-traverse"
+version = "0.1.0"
+dependencies = [
+ "ring",
+ "socket2 0.6.5",
 ]
 
 [[package]]

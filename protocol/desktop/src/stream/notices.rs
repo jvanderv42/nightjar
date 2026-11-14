@@ -46,7 +46,7 @@ impl Streaming {
                     match result {
                         Ok(Some(image)) => match crate::clipboard::write(image) {
                             Ok(()) => self.show_toast(tr("PC image copied to this device.")),
-                            Err(error) => self.show_toast(trf("Could not put the PC's image on this device's clipboard: {}", &[&error])),
+                            Err(error) => self.show_toast(trf("Could not put the PC’s image on this device’s clipboard: {}", &[&error])),
                         },
                         Ok(None) => self.show_toast(tr("Image sent to the PC.")),
                         Err(error) => self.show_toast(error),
@@ -67,6 +67,12 @@ impl Streaming {
                     if let Err(error) = result {
                         self.show_toast(error);
                     }
+                }
+                Notice::Guests(answer) => {
+                    for toast in self.guests.answered(answer, Instant::now()) {
+                        self.show_toast(toast);
+                    }
+                    self.needs_redraw = true;
                 }
                 Notice::HostAudio(answer) => {
                     if let Err(error) = self.host_audio.answered(answer) {
@@ -170,6 +176,7 @@ impl Streaming {
                 Notice::Stage(_) | Notice::Reconnecting(_) | Notice::Started => {}
             }
         }
+        self.poll_guests();
         self.route_microphones(pads);
         *lock(&self.shared.controller_audio) = pads.pads.iter().filter_map(|p| p.audio.as_ref().map(|audio| Arc::downgrade(&audio.playback))).collect();
         self.controller_mouse_active = false;
@@ -187,7 +194,7 @@ impl Streaming {
         let mut status = [0u8; 16];
         if self.controller_audio_available() {
             for pad in &pads.pads {
-                if let Some(audio) = &pad.audio { status[usize::from(pad.index)] = audio.status(self.settings.microphone, self.microphone_muted); }
+                if let Some(audio) = &pad.audio { status[usize::from(pad.sent_as())] = audio.status(self.settings.microphone, self.microphone_muted); }
             }
         }
         if status != self.audio_status.0 || self.audio_status.1.elapsed() >= Duration::from_secs(1) {
@@ -287,6 +294,11 @@ impl Streaming {
                 Some(usb) => usb.on_message(message),
                 None => eprintln!("nightjar: USB: ignored {message:?}: USB forwarding is off here"),
             },
+            ControlEvent::FrameWarpModel(model) => {
+                if let Some(line) = self.frame_warp.as_mut().and_then(|presenter| presenter.model(&model)) {
+                    eprintln!("{line}");
+                }
+            }
             _ => {}
         }
     }
@@ -295,7 +307,7 @@ impl Streaming {
         eprintln!("nightjar: cursor: {error}");
         if !self.cursor_warning {
             self.cursor_warning = true;
-            self.show_toast(tr("The PC's cursor could not be drawn; using the default pointer."));
+            self.show_toast(tr("The PC’s cursor could not be drawn; using the default pointer."));
         }
     }
 }

@@ -256,6 +256,7 @@ public class RustEngineJniParityTest {
         passedAs.put("pyrowaveEarlyRequested", "pyrowaveEarly");
         passedAs.put("codecDirectRequested", "codecDirect");
         passedAs.put("receiveDecodePriorityRequested", "receiveDecodePriority");
+        passedAs.put("receiveCoalescingRequested", "receiveCoalescing");
         List<String> declared = new ArrayList<>();
         for (String parameter : splitParameters(declaration.group(1))) {
             String[] words = parameter.trim().split("\\s+");
@@ -302,6 +303,119 @@ public class RustEngineJniParityTest {
                 + missing, missing.isEmpty());
         assertTrue("C_ONLY entries that are not MoonBridge natives any more: " + staleListEntries,
                 staleListEntries.isEmpty());
+    }
+
+    /** The {@code pub const NAME: i32 = value;} constants of a Rust file whose names start with {@code prefix}. */
+    private static Map<String, Integer> rustConstants(String text, String prefix) {
+        Map<String, Integer> constants = new TreeMap<>();
+        Matcher constant = Pattern.compile("pub const (" + prefix + "\\w+): i32 = (-?\\d+);").matcher(text);
+        while (constant.find()) {
+            assertNull("declared twice: " + constant.group(1),
+                    constants.put(constant.group(1), Integer.parseInt(constant.group(2))));
+        }
+        return constants;
+    }
+
+    @Test public void frameWarpCodesAgreeAcrossRustJavaAndTheNativeRenderers() throws IOException {
+        // A swap would draw an unmasked HUD shifted, or a stale mask; the overlay would name the wrong state.
+        String rust = read("frame_warp.rs");
+        Map<String, Integer> status = rustConstants(rust, "STATUS_");
+        status.remove("STATUS_NUMBERS");
+        Map<String, Integer> expected = new TreeMap<>();
+        expected.put("STATUS_OFF", MoonBridge.FRAME_WARP_OFF);
+        expected.put("STATUS_NOT_OFFERED", MoonBridge.FRAME_WARP_NOT_OFFERED);
+        expected.put("STATUS_LEARNING", MoonBridge.FRAME_WARP_LEARNING);
+        expected.put("STATUS_MOUSE", MoonBridge.FRAME_WARP_MOUSE);
+        expected.put("STATUS_STICK", MoonBridge.FRAME_WARP_STICK);
+        expected.put("STATUS_DECLINED", MoonBridge.FRAME_WARP_OFF_FOR_STREAM);
+        assertEquals(expected, status);
+
+        Map<String, Integer> codes = rustConstants(rust, "(?:WARP|MASK)_");
+        Map<String, Integer> java = new TreeMap<>();
+        java.put("WARP_NO_MASK", MoonBridge.FRAME_WARP_NO_MASK);
+        java.put("WARP_INACTIVE", MoonBridge.FRAME_WARP_INACTIVE);
+        java.put("MASK_UNCHANGED", MoonBridge.FRAME_WARP_MASK_UNCHANGED);
+        java.put("MASK_CLEARED", MoonBridge.FRAME_WARP_MASK_CLEARED);
+        java.put("MASK_TOO_SMALL", MoonBridge.FRAME_WARP_MASK_TOO_SMALL);
+        assertEquals(java, codes);
+
+        String c = new String(Files.readAllBytes(new File("src/main/jni/frame_warp_api.h").toPath()),
+                StandardCharsets.UTF_8);
+        Map<String, Integer> defines = new TreeMap<>();
+        Matcher define = Pattern.compile("#define FRAME_WARP_(\\w+) \\(?(-?\\d+)\\)?").matcher(c);
+        while (define.find()) {
+            defines.put(define.group(1), Integer.parseInt(define.group(2)));
+        }
+        // The header leaves the WARP_ off the warp codes: FRAME_WARP_NO_MASK, FRAME_WARP_INACTIVE.
+        Map<String, Integer> fromRust = new TreeMap<>();
+        for (Map.Entry<String, Integer> code : codes.entrySet()) {
+            String name = code.getKey();
+            fromRust.put(name.startsWith("WARP_") ? name.substring("WARP_".length()) : name, code.getValue());
+        }
+        Matcher version = Pattern.compile("pub const API_VERSION: u32 = (\\d+);").matcher(rust);
+        assertTrue(version.find());
+        fromRust.put("API_VERSION", Integer.parseInt(version.group(1)));
+        // How many floats warp() and peek() write: a renderer with a shorter array would be written past its end.
+        Matcher floats = Pattern.compile("pub const WARP_FLOATS: usize = (\\d+);").matcher(rust);
+        assertTrue(floats.find());
+        fromRust.put("FLOATS", Integer.parseInt(floats.group(1)));
+        assertEquals(fromRust, defines);
+        assertEquals(MoonBridge.FRAME_WARP_FLOATS, (int) defines.get("FLOATS"));
+    }
+
+    @Test public void frameWarpWritesTheShiftThenTheLensTermsEverywhere() throws IOException {
+        // Eight floats: the centre's shift as fractions of the picture and in pixels, then the lens terms. A renderer
+        // that read them in another order would turn the picture by its shift in pixels.
+        String rust = read("frame_warp.rs");
+        assertTrue(rust.contains("pub const API_VERSION: u32 = 3;"));
+        assertTrue(rust.contains("pub const WARP_FLOATS: usize = 8;"));
+        assertTrue(rust.contains(
+                "pub const WARP_STILL: [f32; WARP_FLOATS] = [0.0, 0.0, 0.0, 0.0, FLAT[0], FLAT[1], FLAT[2], FLAT[3]];"));
+        assertTrue(rust.contains("let [kx, ky, nx, ny] = warp.lens;\n"
+                + "    (code, [warp.uv[0], warp.uv[1], warp.pixels[0], warp.pixels[1], kx, ky, nx, ny])"));
+        assertTrue(rust.contains("unsafe fn write_shift(values: &[f32; WARP_FLOATS], out: *mut f32) {"));
+        // Java's array is as long as Rust writes, and a shorter one draws the picture as it is.
+        String lib = read("lib.rs");
+        assertEquals(3, lib.split(Pattern.quote("if env.get_array_length(&out).unwrap_or(0) < values.len() as i32"),
+                -1).length);
+        String gles = new String(Files.readAllBytes(
+                new File("src/main/java/com/limelight/binding/video/GlesUpscaler.java").toPath()), StandardCharsets.UTF_8);
+        assertTrue(gles.contains("private final float[] warpOut = new float[MoonBridge.FRAME_WARP_FLOATS];"));
+        // The native renderers size theirs by the header, and a picture drawn as it is has a flat picture's terms.
+        String mask = new String(Files.readAllBytes(new File("src/main/jni/frame_warp_mask.h").toPath()),
+                StandardCharsets.UTF_8).replace("\r\n", "\n");
+        assertTrue(mask.contains("for (int i = 0; i < FRAME_WARP_FLOATS; ++i) {\n        out[i] = i >= 6 ? 1.0f : 0.0f;"));
+        for (String renderer : new String[] {"vulkan/vulkan_renderer.cpp", "pyrowave-renderer/pyrowave_renderer.cpp"}) {
+            String cpp = new String(Files.readAllBytes(new File("src/main/jni/" + renderer).toPath()),
+                    StandardCharsets.UTF_8).replace("\r\n", "\n");
+            assertFalse(renderer, Pattern.compile("float (?:warpOut|out|peeked)\\[4\\]").matcher(cpp).find());
+            assertTrue(renderer, cpp.contains("float warpOut[FRAME_WARP_FLOATS];\n"));
+            assertTrue(renderer, cpp.contains("[FRAME_WARP_FLOATS] = {};\n"));
+        }
+    }
+
+    @Test public void frameWarpTableHasTheSameFieldsInTheSameOrderInRustAndC() throws IOException {
+        // The renderers call through this table by offset: a field out of order calls the wrong function.
+        String rust = read("frame_warp.rs");
+        int rustStart = rust.indexOf("pub struct FrameWarpApi {");
+        assertTrue(rustStart >= 0);
+        String rustBody = rust.substring(rustStart, rust.indexOf("\n}", rustStart));
+        List<String> rustFields = new ArrayList<>();
+        Matcher rustField = Pattern.compile("\\n\\s*pub (\\w+):").matcher(rustBody);
+        while (rustField.find()) rustFields.add(rustField.group(1));
+
+        String c = new String(Files.readAllBytes(new File("src/main/jni/frame_warp_api.h").toPath()),
+                StandardCharsets.UTF_8);
+        int cStart = c.indexOf("typedef struct FrameWarpApi {");
+        assertTrue(cStart >= 0);
+        String cBody = c.substring(cStart, c.indexOf("} FrameWarpApi;", cStart));
+        List<String> cFields = new ArrayList<>();
+        Matcher cField = Pattern.compile("\\n\\s*(?:uint32_t (\\w+);|[\\w ]+\\(\\*(\\w+)\\)\\()").matcher(cBody);
+        while (cField.find()) cFields.add(cField.group(1) != null ? cField.group(1) : cField.group(2));
+
+        assertEquals(Arrays.asList("version", "frame_for_pts", "warp", "mask", "peek", "input_seq", "stick_deflected"),
+                rustFields);
+        assertEquals(rustFields, cFields);
     }
 
     @Test public void networkChangedAnswersWithMoonBridgesNetworkCodes() throws IOException {
