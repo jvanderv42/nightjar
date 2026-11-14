@@ -8,8 +8,8 @@
   An unofficial Android-focused fork of <a href="https://github.com/RamazanKara/nightjar">Nightjar</a>, built to fix troublesome controller motion input and give players control over gyroscope mapping.
 </p>
 <p align="center">
-  <a href="https://github.com/jvanderv42/nightjar/releases/download/custom-5.2.0-1/nightjar-5.2.0-custom-universal.apk"><img src="https://img.shields.io/badge/Download-Android%20APK-3cba91?style=for-the-badge&logo=android&logoColor=white" alt="Download the universal Android APK"></a>
-  <a href="https://github.com/jvanderv42/nightjar/releases/tag/custom-5.2.0-1"><img src="https://img.shields.io/badge/Release-5.2.0%20Custom-5969df?style=for-the-badge" alt="Release details"></a>
+  <a href="https://github.com/jvanderv42/nightjar/releases"><img src="https://img.shields.io/badge/Download-Android%20APK-3cba91?style=for-the-badge&logo=android&logoColor=white" alt="Download the universal Android APK"></a>
+  <a href="https://github.com/jvanderv42/nightjar/releases"><img src="https://img.shields.io/badge/Latest%20release-View%20downloads-5969df?style=for-the-badge" alt="Release details"></a>
 </p>
 <p align="center">
   <a href="https://github.com/jvanderv42/nightjar/releases"><img src="https://img.shields.io/github/downloads/jvanderv42/nightjar/total?label=downloads" alt="Fork downloads"></a>
@@ -25,7 +25,7 @@ A gamepad can work perfectly when connected directly to Windows yet behave diffe
 
 This started as a practical attempt to solve exactly that problem on an **Astra 2 Android gaming handheld**, using **Flydigi Apex 4 (Wukong edition)** and **Vader 4 Pro** controllers. The controllers' motion worked as expected directly on Windows, but not when streaming through Android. The solution grew into reusable controller identification, axis remapping, adjustable sensitivity and tools to understand the input a controller is actually reporting.
 
-**The goal isn't to replace upstream Nightjar.** It's to make its Android game-streaming experience more useful to people who care about motion aiming, unusual controllers and troubleshooting input behavior. The project is built on upstream Nightjar 5.2.0 and retains its broader streaming feature set.
+**The goal isn't to replace upstream Nightjar.** It's to make its Android game-streaming experience more useful to people who care about motion aiming, unusual controllers and troubleshooting input behavior. The fork follows upstream Nightjar releases while retaining its own Android controller improvements.
 
 ## What this edition adds
 
@@ -62,7 +62,7 @@ The mapper changes how **controller motion input** is interpreted by Nightjar be
 
 ### Getting started
 
-1. **Download the universal Android APK** from the button above or the [release page](https://github.com/jvanderv42/nightjar/releases/tag/custom-5.2.0-1).
+1. **Download the universal Android APK** from the button above or the [release page](https://github.com/jvanderv42/nightjar/releases).
 2. Install it on an Android handheld, phone, tablet or Android TV device. Android may ask you to allow installation from the browser or file manager.
 3. Run a **Moonlight-compatible host** on your PC—such as [Sunshine](https://github.com/LizardByte/Sunshine), [Apollo](https://github.com/ClassicOldSong/Apollo), [Vibepollo](https://github.com/Nonary/Vibepollo) or [Rubylight](https://github.com/RamazanKara/Rubylight).
 4. Open Nightjar Custom, discover or manually add the PC, and complete the host's normal PIN pairing process.
@@ -119,10 +119,10 @@ The custom build uses the visible app name **Nightjar**. It is signed with the f
 
 ### Downloads and integrity
 
-**Current public release:** [Nightjar Custom 5.2.0 — Universal Android](https://github.com/jvanderv42/nightjar/releases/tag/custom-5.2.0-1)
+**Download the current public build:** [Nightjar Custom — Universal Android](https://github.com/jvanderv42/nightjar/releases)
 
-- **[Download universal APK](https://github.com/jvanderv42/nightjar/releases/download/custom-5.2.0-1/nightjar-5.2.0-custom-universal.apk)** (ARM64, ARMv7, x86, x86_64)
-- **[Download SHA-256 checksum](https://github.com/jvanderv42/nightjar/releases/download/custom-5.2.0-1/SHA256SUMS.txt)**
+- **[Find the universal APK](https://github.com/jvanderv42/nightjar/releases)** (ARM64, ARMv7, x86, x86_64)
+- **[Find the SHA-256 checksum](https://github.com/jvanderv42/nightjar/releases)**
 
 The release APK was built by [GitHub Actions](https://github.com/jvanderv42/nightjar/actions/workflows/custom-nightjar-universal.yml) from this fork and validated for the expected package ID, signature and native streaming engines. **Releases** are the download source; you don't need to compile anything or download an automatically expiring Actions artifact.
 
@@ -154,7 +154,7 @@ Licensed under [GNU GPL-3.0](LICENSE.txt). Source code and build workflows are a
 
 <p align="center">
 <strong>Want to try better gyro controls on your Android handheld?</strong><br><br>
-<a href="https://github.com/jvanderv42/nightjar/releases/tag/custom-5.2.0-1"><strong>Download Nightjar Custom 5.2.0</strong></a>
+<a href="https://github.com/jvanderv42/nightjar/releases"><strong>Download Nightjar Custom</strong></a>
 &nbsp;·&nbsp;
 <a href="https://github.com/jvanderv42/nightjar/issues">Report a controller issue</a>
 &nbsp;·&nbsp;
