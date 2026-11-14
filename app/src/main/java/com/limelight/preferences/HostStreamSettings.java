@@ -196,9 +196,14 @@ public class HostStreamSettings extends NightjarActivity {
     /** One game's values on one PC. */
     public static void showGame(Activity activity, String hostUuid, String hostName, String appUuid, int appId,
                                 String appName) {
-        activity.startActivity(new Intent(activity, HostStreamSettings.class)
+        activity.startActivity(intentForGame(activity, hostUuid, hostName, appUuid, appId, appName));
+    }
+
+    static Intent intentForGame(android.content.Context context, String hostUuid, String hostName, String appUuid,
+                                int appId, String appName) {
+        return new Intent(context, HostStreamSettings.class)
                 .putExtra(EXTRA_MODE, Mode.GAME.name()).putExtra("host_uuid", hostUuid).putExtra("host_name", hostName)
-                .putExtra(EXTRA_APP_UUID, appUuid).putExtra(EXTRA_APP_ID, appId).putExtra(EXTRA_APP_NAME, appName));
+                .putExtra(EXTRA_APP_UUID, appUuid).putExtra(EXTRA_APP_ID, appId).putExtra(EXTRA_APP_NAME, appName);
     }
 
     @Override
@@ -826,15 +831,15 @@ public class HostStreamSettings extends NightjarActivity {
             row(stream, "upscaling", R.string.title_upscaling, this::showUpscaling);
             row(stream, "sharpness", R.string.title_upscaling_sharpness, this::showSharpness);
             row(stream, "hdr", R.string.title_enable_hdr, () -> showSwitch("hdr", R.string.title_enable_hdr));
-            row(stream, "vrr", R.string.title_vrr, () -> showSwitch("vrr", R.string.title_vrr));
+            row(stream, "vrr", R.string.title_vrr, this::showVrr);
             row(stream, "pacing", R.string.title_frame_pacing, this::showPacing);
             row(stream, "yuv444", R.string.title_sharp_color, () -> showSwitch("yuv444", R.string.title_sharp_color));
-            // A PC's own choice over its app setting, for the image enhancements its host offers
+            // A PC's or game's own choice over its app setting, for the image enhancements its host offers
             // (NvidiaEnhancements); other hosts and profiles never show them.
-            if (activity.mode == Mode.PC && activity.caps.offersEnhancement(HostCapabilities.RTX_HDR)) {
+            if ((activity.mode == Mode.PC || activity.mode == Mode.GAME) && activity.caps.offersEnhancement(HostCapabilities.RTX_HDR)) {
                 row(stream, "rtx_hdr", R.string.title_rtx_hdr, () -> showEnhancement(HostStreamProfile.Field.RTX_HDR, R.string.title_rtx_hdr));
             }
-            if (activity.mode == Mode.PC && activity.caps.offersEnhancement(HostCapabilities.RTX_VIDEO)) {
+            if ((activity.mode == Mode.PC || activity.mode == Mode.GAME) && activity.caps.offersEnhancement(HostCapabilities.RTX_VIDEO)) {
                 row(stream, "rtx_video", R.string.title_rtx_video, () -> showEnhancement(HostStreamProfile.Field.RTX_VIDEO, R.string.title_rtx_video));
             }
             boolean pc = activity.mode == Mode.PC;
@@ -1029,7 +1034,6 @@ public class HostStreamSettings extends NightjarActivity {
         private static HostStreamProfile.Field switchField(String key) {
             switch (key) {
                 case "hdr": return HostStreamProfile.Field.HDR;
-                case "vrr": return HostStreamProfile.Field.VRR;
                 case "virtual": return HostStreamProfile.Field.VIRTUAL_DISPLAY;
                 case "yuv444": return HostStreamProfile.Field.YUV444;
                 default: return HostStreamProfile.Field.FULL_RANGE;
@@ -1069,7 +1073,6 @@ public class HostStreamSettings extends NightjarActivity {
         private boolean switchValue(PreferenceConfiguration config, String key) {
             switch (key) {
                 case "hdr": return config.enableHdr;
-                case "vrr": return config.vrr;
                 case "virtual": return config.virtualDisplay;
                 case "yuv444": return config.enableYuv444;
                 default: return config.fullRange;
@@ -1080,7 +1083,6 @@ public class HostStreamSettings extends NightjarActivity {
             HostStreamProfile own = activity.overrides;
             switch (key) {
                 case "hdr": return own.hdr;
-                case "vrr": return own.vrr;
                 case "virtual": return own.virtualDisplay;
                 case "yuv444": return own.yuv444;
                 default: return own.fullRange;
@@ -1091,7 +1093,6 @@ public class HostStreamSettings extends NightjarActivity {
             HostStreamProfile own = activity.overrides;
             switch (key) {
                 case "hdr": own.hdr = value; break;
-                case "vrr": own.vrr = value; break;
                 case "virtual": own.virtualDisplay = value; break;
                 case "yuv444": own.yuv444 = value; break;
                 default: own.fullRange = value; break;
@@ -1122,9 +1123,10 @@ public class HostStreamSettings extends NightjarActivity {
                     getString(R.string.upscaling_sharpness_value, config.upscalingSharpness)));
             findPreference("sharpness").setEnabled(config.upscalingMode == UpscalingPolicy.Mode.FSR1 ||
                     config.upscalingMode == UpscalingPolicy.Mode.SGSR1);
-            for (String key : new String[] {"hdr", "vrr", "yuv444", "full_range"}) {
+            for (String key : new String[] {"hdr", "yuv444", "full_range"}) {
                 findPreference(key).setSummary(summary(switchField(key), switchOverride(key) != null, switchText(key, switchValue(config, key))));
             }
+            findPreference("vrr").setSummary(summary(HostStreamProfile.Field.VRR, own.vrr != null, vrrText(config)));
             String pacing = summary(HostStreamProfile.Field.PACING, own.pacing != null, pacingText(config));
             findPreference("pacing").setSummary(config.vrr ? pacing + "\n" + getString(R.string.layers_pacing_vrr) : pacing);
             // Greyed where no screen has ARR, as in Settings; a value saved here is kept, and pacing applies.
@@ -1150,11 +1152,17 @@ public class HostStreamSettings extends NightjarActivity {
             }
             Preference rtxHdr = findPreference("rtx_hdr");
             if (rtxHdr != null) {
-                rtxHdr.setSummary(enhancementText(own.rtxHdr) + "\n" + getString(R.string.summary_rtx_hdr));
+                String value = activity.mode == Mode.GAME
+                        ? summary(HostStreamProfile.Field.RTX_HDR, own.rtxHdr != null, enhancementText(config.rtxHdr))
+                        : enhancementText(own.rtxHdr);
+                rtxHdr.setSummary(value + "\n" + getString(R.string.summary_rtx_hdr));
             }
             Preference rtxVideo = findPreference("rtx_video");
             if (rtxVideo != null) {
-                rtxVideo.setSummary(enhancementText(own.rtxVideo) + "\n" + getString(R.string.summary_rtx_video));
+                String value = activity.mode == Mode.GAME
+                        ? summary(HostStreamProfile.Field.RTX_VIDEO, own.rtxVideo != null, enhancementText(config.rtxVideo))
+                        : enhancementText(own.rtxVideo);
+                rtxVideo.setSummary(value + "\n" + getString(R.string.summary_rtx_video));
             }
             Preference preset = findPreference("preset");
             if (preset != null) {
@@ -1217,6 +1225,31 @@ public class HostStreamSettings extends NightjarActivity {
                     }).setNegativeButton(android.R.string.cancel, null).show();
         }
 
+        /** Off, On or Fastest as {@code config} streams it; Off where no screen has ARR. */
+        private String vrrText(PreferenceConfiguration config) {
+            return getResources().getStringArray(R.array.vrr_choice_names)[
+                    VrrChoice.of(config.vrr && DisplayFrameRatePolicy.vrrOffered(activity), config.realVrr)];
+        }
+
+        /**
+         * Variable refresh rate: the layers below, Off, On or Fastest. On and Fastest set VRR and Real VRR together,
+         * Off sets VRR off (VrrChoice). A layer that sets VRR on without Real VRR, as saved before, shows the Real VRR
+         * it streams with.
+         */
+        private void showVrr() {
+            HostStreamProfile own = activity.overrides;
+            String[] names = getResources().getStringArray(R.array.vrr_choice_names);
+            CharSequence[] items = {sameAs(vrrText(activity.global)), names[VrrChoice.OFF], names[VrrChoice.ON], names[VrrChoice.FASTEST]};
+            int checked = own.vrr == null ? 0 : 1 + VrrChoice.of(own.vrr,
+                    own.realVrr != null ? own.realVrr : activity.effective().realVrr);
+            new NavigationDialogBuilder(activity).setTitle(R.string.title_vrr)
+                    .setSingleChoiceItems(items, checked, (dialog, which) -> {
+                        VrrChoice.save(own, which == 0 ? null : which - 1);
+                        updateSummaries();
+                        dialog.dismiss();
+                    }).setNegativeButton(android.R.string.cancel, null).show();
+        }
+
         /** Competitive, Smoothness and Quality each set only the values they name; Custom changes nothing. */
         private void showPreset() {
             GameProfilePreset[] presets = GameProfilePreset.values();
@@ -1257,7 +1290,9 @@ public class HostStreamSettings extends NightjarActivity {
 
         private void showEnhancement(HostStreamProfile.Field field, int title) {
             Boolean own = field == HostStreamProfile.Field.RTX_HDR ? activity.overrides.rtxHdr : activity.overrides.rtxVideo;
-            CharSequence[] items = {enhancementText(null), onOff(true), onOff(false)};
+            Boolean below = field == HostStreamProfile.Field.RTX_HDR ? activity.global.rtxHdr : activity.global.rtxVideo;
+            CharSequence first = activity.mode == Mode.GAME ? sameAs(enhancementText(below)) : enhancementText(null);
+            CharSequence[] items = {first, onOff(true), onOff(false)};
             int checked = own == null ? 0 : own ? 1 : 2;
             new NavigationDialogBuilder(activity).setTitle(title)
                     .setSingleChoiceItems(items, checked, (dialog, which) -> {

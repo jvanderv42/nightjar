@@ -356,6 +356,10 @@ pub struct Settings {
     /// when decoded) for 1.3 to 1.5 ms, and over Wi-Fi halved the frames off it for 2.6 to 4.2 ms
     /// (docs/pyrowave-decode.md, "Real VRR").
     pub present_at_host_times: bool,
+    /// Tear-free VRR (Windows, with `vrr`): a frame that arrives while the display is still drawing
+    /// the last one waits for it to finish, at most one refresh, and is shown whole
+    /// (`present::VrrSync::Scan`). On by default; off shows every frame at once, with tearing.
+    pub vrr_tear_free: bool,
     /// Without VRR: wait for the display's refresh (no tearing).
     pub vsync: bool,
     /// Without VRR: how pictures wait for the display (Android's `frame_pacing`).
@@ -443,6 +447,10 @@ pub struct Settings {
     /// Drawing straight to the display, a stream's decoded pictures go on a display plane
     /// (`stream::kms_scanout`) instead of being drawn into the window; for the whole app.
     pub video_planes: bool,
+    /// "High-performance GPU power while streaming" (Linux): each AMD GPU that drives a connected
+    /// display is held at its peak power state for the stream (`stream::gpu_hold`). Off by default;
+    /// for the whole app.
+    pub high_performance_gpu_power: bool,
     pub microphone: bool,
     /// Echo cancellation on the microphone (`stream::microphone`), automatic by default.
     pub mic_echo_cancel: MicEcho,
@@ -1063,6 +1071,7 @@ impl Default for Settings {
             align_video_top: false,
             vrr: true,
             present_at_host_times: true,
+            vrr_tear_free: true,
             vsync: true,
             frame_pacing: FramePacing::Latency,
             drop_late_frames: true,
@@ -1104,6 +1113,7 @@ impl Default for Settings {
             graphics_card: GraphicsCard::Automatic,
             display_output: DisplayOutput::Automatic,
             video_planes: true,
+            high_performance_gpu_power: false,
             microphone: false,
             mic_echo_cancel: MicEcho::Auto,
             mic_gain: 100,

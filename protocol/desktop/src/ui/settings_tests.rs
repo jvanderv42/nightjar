@@ -443,11 +443,10 @@ fn the_section_key_table_is_what_the_page_draws() {
         "hdr_desktop_brightness" => false,
         // A PC's own settings, for a host that reports them (NvidiaEnhancements).
         "rtx_hdr" | "rtx_video" => false,
-        "present_at_host_times" => vrr,
         "frame_pacing" | "vsync" => !vrr,
         // Balanced's, which the default pacing is not (its own test draws it).
         "drop_late_frames" => false,
-        "renderer" | "display_output" | "video_planes" | "vulkan_video_first" | "vulkan_rfi" => cfg!(target_os = "linux"),
+        "renderer" | "display_output" | "video_planes" | "high_performance_gpu_power" | "vulkan_video_first" | "vulkan_rfi" => cfg!(target_os = "linux"),
         "graphics_card" => graphics_card_here(),
         _ => true,
     };
@@ -502,7 +501,7 @@ fn the_developer_rows_are_in_debug_and_the_tools_in_advanced() {
                 // The renderer is Linux's choice for the whole app, so a PC's settings do not have it.
                 assert_eq!(drawn.contains(&"renderer"), cfg!(target_os = "linux") && screen == Screen::Settings, "{drawn:?}");
                 // So is where it shows itself, and whether a stream goes on a display plane there.
-                for key in ["display_output", "video_planes"] {
+                for key in ["display_output", "video_planes", "high_performance_gpu_power"] {
                     assert_eq!(drawn.contains(&key), cfg!(target_os = "linux") && screen == Screen::Settings, "{key}: {drawn:?}");
                 }
                 assert!(drawn.contains(&"sops") && drawn.contains(&"link_probe"), "{screen:?}: {drawn:?}");
@@ -527,13 +526,13 @@ fn settings_read_with(changed: Settings) -> Frames {
     f
 }
 
-/// Frame pacing and V-Sync are drawn with Variable refresh rate off, Show frames at the PC's
-/// frame times with it on: a gate over some rows never carries over to the rows after them. A
-/// pacing that waits for the refresh keeps V-Sync on, so its row goes; where the screen can't
-/// tear, VRR has no row and works as off.
+/// Frame pacing and V-Sync are drawn with Variable refresh rate off, and VRR's way of showing
+/// frames is its own row's choice, with no rows of its own: a gate over some rows never carries
+/// over to the rows after them. A pacing that waits for the refresh keeps V-Sync on, so its row
+/// goes; where the screen can't tear, VRR has no row and works as off.
 #[test]
 fn the_vrr_rows_follow_their_own_gates() {
-    let (vrr_row, pacing, vsync, host_times) = ("Variable refresh rate", "Frame pacing", "V-Sync", "Real VRR");
+    let (vrr_row, pacing, vsync) = ("Variable refresh rate", "Frame pacing", "V-Sync");
     let display = |s: Settings, tearing: bool| {
         let mut f = settings_with(s);
         f.l.tearing_supported = tearing;
@@ -544,15 +543,96 @@ fn the_vrr_rows_follow_their_own_gates() {
     for vrr in [false, true] {
         let f = display(Settings { vrr, frame_pacing: crate::config::FramePacing::Latency, ..Settings::default() }, true);
         assert!(shows(&f, vrr_row), "{:?}", f.drawn);
-        assert_eq!((shows(&f, pacing), shows(&f, vsync), shows(&f, host_times)), (!vrr, !vrr, vrr), "VRR {vrr}: {:?}", f.drawn);
+        assert_eq!((shows(&f, pacing), shows(&f, vsync)), (!vrr, !vrr), "VRR {vrr}: {:?}", f.drawn);
+        assert!(!shows(&f, "Real VRR") && !shows(&f, "Tear-free VRR"), "VRR {vrr}: one row: {:?}", f.drawn);
         assert!(shows(&f, "Upscaling"), "VRR {vrr}: the next group is its own");
     }
     let f = display(Settings { vrr: false, frame_pacing: crate::config::FramePacing::Balanced, ..Settings::default() }, true);
     assert!(shows(&f, pacing) && !shows(&f, vsync), "a pacing that waits keeps V-Sync on: {:?}", f.drawn);
     if cfg!(windows) {
         let f = display(Settings { vrr: true, frame_pacing: crate::config::FramePacing::Latency, ..Settings::default() }, false);
-        assert!(!shows(&f, vrr_row) && shows(&f, pacing) && shows(&f, vsync) && !shows(&f, host_times), "{:?}", f.drawn);
+        assert!(!shows(&f, vrr_row) && shows(&f, pacing) && shows(&f, vsync), "{:?}", f.drawn);
     }
+}
+
+/// Variable refresh rate is one choice for its three keys: On and Fastest write all three, Off
+/// only `vrr`. A mix none of them writes reads Custom, which the list never offers.
+#[test]
+fn variable_refresh_rate_is_one_choice_for_its_three_keys() {
+    let row = "Variable refresh rate";
+    let mut f = settings_with(Settings::default());
+    f.l.tearing_supported = true;
+    f.l.settings_view.section = "Display & image";
+    f.settle();
+    assert_eq!(row_words(&f, row), ["On"], "the defaults are On");
+    click_value(&mut f, row, "On");
+    assert!(shows(&f, "Fastest") && shows(&f, "Off"), "the list is open: {:?}", f.drawn);
+    click_last(&mut f, "Fastest");
+    let triple = |f: &Frames| (f.l.settings.vrr, f.l.settings.present_at_host_times, f.l.settings.vrr_tear_free);
+    assert_eq!(triple(&f), (true, false, false), "Fastest writes all three");
+    click_value(&mut f, row, "Fastest");
+    click_last(&mut f, "Off");
+    assert_eq!(triple(&f), (false, false, false), "Off writes only vrr");
+    click_value(&mut f, row, "Off");
+    click_last(&mut f, "On");
+    assert_eq!(triple(&f), (true, true, true), "On writes all three");
+
+    // A mix from the old switches or a hand-edited file: shown honestly, not offered.
+    let mixed = Settings { present_at_host_times: false, vrr_tear_free: true, ..Settings::default() };
+    let mut f = settings_with(mixed.clone());
+    f.l.tearing_supported = true;
+    f.l.settings_view.section = "Display & image";
+    f.settle();
+    let shown = if vrr_tear_free_applies() { "Custom" } else { "Fastest" };
+    let words = row_words(&f, row);
+    assert!(words.contains(&shown) && words.contains(&"Reset"), "{words:?}");
+    assert_eq!(f.l.settings, mixed, "drawing it changes nothing");
+    click_value(&mut f, row, "Reset");
+    assert_eq!(triple(&f), (true, true, true), "Reset puts all three back");
+    f.l.settings = mixed.clone();
+    f.settle();
+    let customs = |f: &Frames| f.placed.iter().filter(|(t, ..)| t == "Custom").count();
+    let before = customs(&f);
+    click_value(&mut f, row, shown);
+    assert!(shows(&f, "Off") && shows(&f, "On"), "the list is open: {:?}", f.drawn);
+    assert_eq!(customs(&f), before, "Custom is not among the choices: {:?}", f.drawn);
+    click_last(&mut f, "On");
+    assert_eq!(triple(&f), (true, true, true));
+}
+
+/// A PC's own Variable refresh rate keeps all three keys together, and its box gives all three
+/// back.
+#[test]
+fn a_pcs_variable_refresh_rate_keeps_its_three_keys_together() {
+    use egui::accesskit::{Role, Toggled};
+    let mut f = Frames::new(record("PC", true, false), Reach::Online);
+    f.size = vec2(1280.0, 4000.0);
+    f.ctx.enable_accesskit();
+    f.l.tearing_supported = true;
+    let id = f.hosts.list[0].id;
+    f.l.open_host_settings(id, &f.hosts.list[0]);
+    f.l.settings_view.section = "Display & image";
+    f.settle();
+    let row = "Variable refresh rate";
+    click_value(&mut f, row, "On");
+    click_last(&mut f, "Fastest");
+    for key in ["vrr", "present_at_host_times", "vrr_tear_free"] {
+        assert!(f.l.edit_overrides.has(&[key]), "the PC keeps {key}: {:?}", f.l.edit_overrides);
+    }
+    let edit = &f.l.edit_settings;
+    assert_eq!((edit.vrr, edit.present_at_host_times, edit.vrr_tear_free), (true, false, false));
+    let row_box = |f: &Frames| {
+        f.access.as_ref().expect("AccessKit is on").nodes.iter()
+            .find(|(_, n)| n.role() == Role::CheckBox && n.label() == Some("For this PC") && n.description() == Some(row))
+            .map(|(_, n)| (n.toggled(), n.bounds().expect("laid out")))
+            .expect("the row's box")
+    };
+    let (toggled, bounds) = row_box(&f);
+    assert_eq!(toggled, Some(Toggled::True));
+    f.click_at(Pos2::new(((bounds.x0 + bounds.x1) / 2.0) as f32, ((bounds.y0 + bounds.y1) / 2.0) as f32), egui::PointerButton::Primary);
+    assert!(f.l.edit_overrides.is_empty(), "the box gives all three back: {:?}", f.l.edit_overrides);
+    let edit = &f.l.edit_settings;
+    assert_eq!((edit.vrr, edit.present_at_host_times, edit.vrr_tear_free), (true, true, true), "the main settings' On again");
 }
 
 /// Sharper colored text is one choice for its two keys, Off or On; under PyroWave it has
@@ -793,7 +873,8 @@ fn the_controller_buttons_page_has_one_test_switch_and_no_repeated_hints() {
 }
 
 /// The settings page in every state worth a look, at 1280x800 (150 %) and 1920x1080: every
-/// section with its main rows (`settings-section-N`) and with its fold open (`-more`, `-more-end`).
+/// section with its main rows (`settings-section-N`) and with its fold open (`-more`, `-more-end`),
+/// and Variable refresh rate where the display offers it (`settings-vrr`, `-list`, `-custom`).
 /// `NIGHTJAR_SHOTS=<dir> cargo test -p nightjar-desktop settings_screenshots -- --ignored`.
 #[test]
 #[ignore = "writes PNGs; set NIGHTJAR_SHOTS"]
@@ -868,6 +949,19 @@ fn settings_screenshots() {
             shoot(&mut f, "settings-reset-all");
             f.l.settings_view.confirm_reset = false;
             f.l.settings_view.section = "Video";
+            // Variable refresh rate on a display that offers it: the row, its list, and a mix of
+            // its keys the list does not offer.
+            let mut f = fresh();
+            f.l.tearing_supported = true;
+            f.l.go(Screen::Settings);
+            f.l.settings_view.section = "Display & image";
+            f.l.settings_view.to_top = true;
+            shoot(&mut f, "settings-vrr");
+            click_value(&mut f, "Variable refresh rate", "On");
+            shoot(&mut f, "settings-vrr-list");
+            click_last(&mut f, "Fastest");
+            f.l.settings.vrr_tear_free = true;
+            shoot(&mut f, "settings-vrr-custom");
             // Presets at the defaults (Native marked), and the question a chip asks.
             let mut f = fresh();
             (f.l.settings.fps, f.l.settings.bitrate_kbps) = (0, 0);
@@ -1150,7 +1244,8 @@ fn a_column_ends_with_the_page_and_stops_at_its_widest_on_a_wide_window() {
 /// catch-all "Fine-tuning".
 #[test]
 fn a_group_heading_is_written_as_it_reads() {
-    let mut f = settings_with(Settings::default());
+    // The Refresh rate group's rows show with Variable refresh rate off.
+    let mut f = settings_with(Settings { vrr: false, ..Settings::default() });
     f.l.settings_view.section = "Display & image";
     open_folds(&mut f);
     assert!(shows(&f, "Refresh rate") && shows(&f, "PC display"), "{:?}", f.drawn);
@@ -1355,4 +1450,32 @@ fn the_app_and_diagnostics_rows_from_android_do_what_they_say() {
     f.l.settings_view.section = "Advanced";
     f.settle();
     assert!(!shows(&f, "Show decode time after streaming") && !shows(&f, "Latency benchmark") && !shows(&f, "Export latency CSV"), "{:?}", f.drawn);
+}
+
+/// A game's own settings offer the PC's image enhancements as the PC's own settings do, and
+/// only when its host reports them (NvidiaEnhancements).
+#[test]
+fn a_games_settings_offer_the_rtx_enhancements_its_host_reports() {
+    let mut f = Frames::new(record("PC", true, false), Reach::Online);
+    f.size = vec2(1280.0, 4000.0);
+    let id = f.hosts.list[0].id;
+    let at = SECTION_KEYS.iter().position(|keys| keys.iter().any(|k| k[0] == "rtx_hdr")).unwrap();
+    let rows = |f: &mut Frames, page: Screen| {
+        f.l.go(Screen::Apps(id));
+        if page == Screen::HostSettings(id) { f.l.open_host_settings(id, &f.hosts.list[0]) } else { f.l.open_app_settings(id, &f.hosts.list[0], game(7)) }
+        f.l.settings_view.section = SETTINGS_SECTIONS[at];
+        open_folds(f);
+        f.settle();
+        let keys = setting_keys(f);
+        (keys.contains(&"rtx_hdr"), keys.contains(&"rtx_video"))
+    };
+    let mut info = answer(true, 0);
+    info.capabilities = nightjar_core::http::HostCapabilities::from_evidence(nightjar_core::http::Evidence { nvidia_enhancements: 0, ..Default::default() });
+    f.hosts.list[0].info = Some(info.clone());
+    assert_eq!(rows(&mut f, Screen::AppSettings(id)), (false, false), "a host without them offers neither");
+    info.capabilities = nightjar_core::http::HostCapabilities::from_evidence(nightjar_core::http::Evidence { nvidia_enhancements: rubylight_protocol::nvidia_enhance::ALL, ..Default::default() });
+    f.hosts.list[0].info = Some(info);
+    for page in [Screen::HostSettings(id), Screen::AppSettings(id)] {
+        assert_eq!(rows(&mut f, page), (true, true), "{page:?} offers RTX HDR and RTX Video");
+    }
 }

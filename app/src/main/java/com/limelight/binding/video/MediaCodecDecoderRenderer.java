@@ -1284,7 +1284,9 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             LimeLog.info("Using Vulkan renderer; the screen " + (vulkanPresentReports ?
                     "reports when frames are shown" : "does not report when frames are shown"));
             renderer.setVsyncOffset(outputDisplay.getAppVsyncOffsetNanos());
-            if (Boolean.TRUE.equals(currentHdrMode)) {
+            // A 10-bit stream starts in HDR10 before the PC's HDR report arrives, as the decoder is
+            // configured (assumesHdr), so the report doesn't recreate the swapchain a second in.
+            if (currentHdrMode != null ? currentHdrMode : assumesHdr()) {
                 renderer.setHdrMode(true, currentHdrMetadata);
             }
         }
@@ -1785,11 +1787,21 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         pyroWaveDropReason = 0;
         formats = gatePackedHdr(formats, width, height, fps);
         float displayRefreshRate = outputDisplay.getRefreshRate();
+        // Real VRR for PyroWave: the presenter is made here, before the stream starts, so what
+        // start() reads for MediaCodec's clock (the switch and the display's adaptive refresh,
+        // both known since the constructor) is read here for its mode.
+        boolean adaptive;
+        synchronized (vsyncMonitor) {
+            adaptive = outputHasArrSupport;
+        }
+        int pyroWavePacing = FramePacingPolicy.pyroWaveMode(prefs.framePacing, prefs.vrr, prefs.hostFrameTimes, adaptive);
+        // As for MediaCodec's clock: frames are never shown closer than one refresh at the top rate.
+        float topRefreshRate = pyroWavePacing == FramePacingPolicy.PYROWAVE_HOST_TIMES ? maxDisplayRefreshRate() : 0;
         pyroWaveHdrFailure = 0;
         int choice = firstPyroWaveFormat(formats, candidate -> {
             if (stopping) return false;
             boolean ready = pyroWaveRenderer.setup(renderTarget, candidate, width, height, fps, displayRefreshRate,
-                    FramePacingPolicy.pyroWaveMode(prefs.framePacing, prefs.vrr), prefs.fullRange, prefs.stretchVideo,
+                    topRefreshRate, pyroWavePacing, prefs.fullRange, prefs.stretchVideo,
                     prefs.upscalingMode, prefs.upscalingSharpness, context, prefs.gpuMaxClocks,
                     prefs.pyroWavePreacquire) && !stopping;
             if (!ready) {
@@ -4235,7 +4247,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     @Override
     public void start() {
         if ((videoFormat & MoonBridge.VIDEO_FORMAT_MASK_PYROWAVE) != 0) {
-            // Clock sync for the timing CSV; PyroWave frames are not scheduled by host time.
+            // Clock sync for the timing CSV only. With Real VRR the PyroWave presenter shows frames
+            // at the PC's frame times from a clock of its own (FramePacingPolicy.pyroWaveMode).
             hostFrameClock.start(0, false, hostAnnouncesClockSync());
             if (FramePacingPolicy.usesPyroWaveDisplayClock(prefs.framePacing, prefs.vrr, outputVsyncAvailable)) {
                 startChoreographerThread();
@@ -4526,7 +4539,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                     return;
                 }
                 currentHdrMetadata = metadata == null ? null : metadata.clone();
-                if (change == HdrChange.PARAMETERS && setRunningHdrStaticInfo(currentHdrMetadata)) {
+                if (change == HdrChange.PARAMETERS &&
+                        (!decoderCarriesHdrMetadata(vulkan != null) || setRunningHdrStaticInfo(currentHdrMetadata))) {
                     return;
                 }
 
@@ -4573,15 +4587,32 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
 
     /**
      * Whether a restart releases the codec and creates a new one instead of stop() and configure().
-     * MediaTek's Codec2 decoders with their vendor low-latency mode had no input buffers after that
-     * (TCL C6K: 5000 ms dequeues, DecoderHung); without the mode they restarted fine.
+     * MediaTek's Codec2 decoders with their vendor low-latency mode, and Dolby's with Qualcomm's
+     * vendor low-latency keys, had no input buffers after that (TCL C6K and Lenovo TB323FU: 5000 ms
+     * dequeues, DecoderHung); without the vendor keys they restarted fine.
      */
     static boolean restartRecreates(String decoderName, List<String> tuningKeys) {
-        if (!decoderName.toLowerCase(Locale.ROOT).startsWith("c2.mtk.")) return false;
-        for (String key : tuningKeys) {
-            if (key.startsWith("vendor.mtk.vdec.low-latency.mode=") && !key.endsWith("=0")) return true;
+        String lower = decoderName.toLowerCase(Locale.ROOT);
+        if (lower.startsWith("c2.mtk.")) {
+            for (String key : tuningKeys) {
+                if (key.startsWith("vendor.mtk.vdec.low-latency.mode=") && !key.endsWith("=0")) return true;
+            }
+        } else if (lower.startsWith("c2.dolby.")) {
+            for (String key : tuningKeys) {
+                if (key.startsWith("vendor.qti-ext-") && !key.endsWith("=0")) return true;
+            }
         }
         return false;
+    }
+
+    /**
+     * Whether the decoder's output must carry the PC's mastering metadata. Not with the Vulkan
+     * renderer: the decoder writes into its own buffers and the renderer hands the metadata to the
+     * compositor (vkSetHdrMetadataEXT), so a decoder whose output lacks it (the TCL C6K's
+     * c2.mtk.hevc.decoder) needs no restart, which would stall the stream as it starts.
+     */
+    static boolean decoderCarriesHdrMetadata(boolean vulkanPresents) {
+        return !vulkanPresents;
     }
 
     // Outputs after setParameters before the metadata must show in the output format.
@@ -4619,6 +4650,16 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             byte[] expected = uncheckedHdrStaticInfo;
             MediaFormat format = outputFormat;
             if (expected == null || codecRecoveryType.get() != CR_RECOVERY_TYPE_NONE) {
+                return;
+            }
+            if (!decoderCarriesHdrMetadata(vulkanRenderer != null)) {
+                uncheckedHdrStaticInfo = null;
+                return;
+            }
+            if (dolbyVisionActive && format != null && format.containsKey(MediaFormat.KEY_COLOR_TRANSFER) &&
+                    format.getInteger(MediaFormat.KEY_COLOR_TRANSFER) != MediaFormat.COLOR_TRANSFER_ST2084) {
+                uncheckedHdrStaticInfo = null;
+                LimeLog.info("Dolby Vision decoder maps the picture itself; output format has no HDR10 static metadata");
                 return;
             }
             ByteBuffer carried = format != null && format.containsKey(MediaFormat.KEY_HDR_STATIC_INFO) ?
@@ -4833,6 +4874,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                         .append(" | screen image ").append(metric(waits[1], " ms"))
                         .append("\nReplaced by a newer frame: before decode ").append(metric(pyroWaveSkippedPercent, "%"))
                         .append(" | before display ").append(metric(waits[2], "%"));
+                String hostTimes = PyroWaveDecoderRenderer.hostTimesLine(waits[3]);
+                if (hostTimes != null) decode.append('\n').append(hostTimes);
                 if (MoonBridge.isPyroWaveEarlyStream()) {
                     decode.append('\n').append(PyroWaveDecoderRenderer.earlyRecordsLine(pyroWaveRenderer.getEarlyRecords()));
                 }

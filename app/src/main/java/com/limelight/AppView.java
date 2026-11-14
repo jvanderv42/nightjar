@@ -208,6 +208,7 @@ public class AppView extends NightjarActivity implements AdapterFragmentCallback
     @Override
     public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
+        if (recreatingForForm()) return;
 
         // If appGridAdapter is initialized, let it know about the configuration change.
         // If not, it will pick it up when it initializes.
@@ -556,7 +557,7 @@ public class AppView extends NightjarActivity implements AdapterFragmentCallback
 
     /** Lays the content out edge to edge, inside what the chrome and the window leave. */
     private void layOutUnderChrome(int left, int top, int right, int bottom) {
-        GlassForm form = GlassForm.of(this);
+        GlassForm form = chrome != null ? chrome.form() : GlassForm.of(this);
         android.content.res.Resources res = getResources();
         float density = res.getDisplayMetrics().density;
         safeLeft = left;
@@ -617,7 +618,7 @@ public class AppView extends NightjarActivity implements AdapterFragmentCallback
 
     /** The capsule of the running game and the keys' line above the tabs, and what the grid keeps free under its last row. */
     private void placeFoot() {
-        GlassForm form = GlassForm.of(this);
+        GlassForm form = chrome != null ? chrome.form() : GlassForm.of(this);
         android.content.res.Resources res = getResources();
         View resume = findViewById(R.id.library_resume);
         AppObject running = form == GlassForm.TELEVISION ? null : runningApp();
@@ -702,6 +703,11 @@ public class AppView extends NightjarActivity implements AdapterFragmentCallback
     @Override
     public boolean dispatchKeyEvent(android.view.KeyEvent event) {
         if (event.getAction() == android.view.KeyEvent.ACTION_DOWN) onInput(InputSource.of(event), InputSource.vendorOf(event));
+        // Up from the grid's first row goes to the current tab of the shell bar, as on Home; on a phone the tabs are at the foot.
+        if (GlassForm.of(this) != GlassForm.PHONE && com.limelight.ui.ShellFocus.upToCurrentTab(this, event, findViewById(R.id.fragmentView),
+                findViewById(R.id.library_options), findViewById(R.id.library_search_button))) {
+            return true;
+        }
         return super.dispatchKeyEvent(event);
     }
 

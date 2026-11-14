@@ -155,6 +155,7 @@ public class PcView extends NightjarActivity implements AdapterFragmentCallbacks
     @Override
     public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
+        if (recreatingForForm()) return;
 
         if (completeOnCreateCalled) {
             UiHelper.notifyNewRootView(this);
@@ -549,7 +550,7 @@ public class PcView extends NightjarActivity implements AdapterFragmentCallbacks
 
     /** Lays the content out edge to edge, inside what the chrome and the window leave. */
     private void layOutUnderChrome(int left, int top, int right, int bottom) {
-        GlassForm form = GlassForm.of(this);
+        GlassForm form = chrome != null ? chrome.form() : GlassForm.of(this);
         android.content.res.Resources res = getResources();
         float density = res.getDisplayMetrics().density;
         ((com.limelight.ui.NightSkyView) findViewById(R.id.pc_sky)).setSafeTop(top);
@@ -648,6 +649,11 @@ public class PcView extends NightjarActivity implements AdapterFragmentCallbacks
             }
             setKeysAreLastInput(true);
         }
+        // Up from the grid's first row goes to the current tab of the shell bar, as on Home; on a phone the tabs are at the foot.
+        if (GlassForm.of(this) != GlassForm.PHONE && com.limelight.ui.ShellFocus.upToCurrentTab(this, event, findViewById(R.id.fragmentView),
+                findViewById(R.id.manuallyAddPc))) {
+            return true;
+        }
         return super.dispatchKeyEvent(event);
     }
 
@@ -682,10 +688,11 @@ public class PcView extends NightjarActivity implements AdapterFragmentCallbacks
 
     private void updateEmptyState() {
         boolean empty = pcGridAdapter.getCount() == 0;
+        GlassForm form = chrome != null ? chrome.form() : GlassForm.of(this);
         updateOptionsHint();
         noPcFoundLayout.setVisibility(empty ? View.VISIBLE : View.GONE);
         // With no PC there is no selection to name, and the selected tab already names the page.
-        if (GlassForm.of(this) != GlassForm.PHONE) {
+        if (form != GlassForm.PHONE) {
             findViewById(R.id.pc_focus_title).setVisibility(empty ? View.GONE : View.VISIBLE);
             showSelection();
         }
@@ -698,7 +705,7 @@ public class PcView extends NightjarActivity implements AdapterFragmentCallbacks
         }
         findViewById(R.id.pcFragmentContainer).setVisibility(empty ? View.GONE : View.VISIBLE);
         findViewById(R.id.manuallyAddPc).setVisibility(empty ? View.GONE : View.VISIBLE);
-        if (GlassForm.of(this) != GlassForm.PHONE) ShellBar.linkTopRow(this, R.id.manuallyAddPc);
+        if (form != GlassForm.PHONE) ShellBar.linkTopRow(this, R.id.manuallyAddPc);
         placeListFooter();
         boolean filled = listWasEmpty && !empty;
         listWasEmpty = empty;

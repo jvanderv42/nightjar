@@ -700,7 +700,7 @@ fn files_round_trip() {
     // A settings file from an older version keeps the new fields' defaults.
     std::fs::write(dir.join("settings.json"), r#"{"fps": 90}"#).unwrap();
     assert_eq!(store.settings().fps, 90);
-    assert!(store.settings().present_at_host_times, "Real VRR is switched on once");
+    assert!(store.settings().present_at_host_times, "present_at_host_times (Variable refresh rate On) is switched on once");
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -888,6 +888,11 @@ fn recover_interrupted_streams_turns_on_once_and_a_later_off_is_kept() {
     store.save_settings(&settings).unwrap();
     assert!(!store.settings().auto_reconnect, "the user's off after the switch is kept");
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn tear_free_vrr_is_on_by_default() {
+    assert!(Settings::default().vrr_tear_free);
 }
 
 #[test]
