@@ -23,7 +23,7 @@
 
 A gamepad can work perfectly when connected directly to Windows yet behave differently over Android game streaming. In particular, some controllers expose motion through Android as a generic **“Pro Controller”**: the gyroscope is present, but its axes do not line up with the directions the game expects. Move the controller left and the camera may move up. Tilt it vertically and the camera may turn sideways. A standard sensitivity slider can't repair an axis that's mapped to the wrong direction.
 
-This started as a practical attempt to solve exactly that problem on an **Astra 2 Android gaming handheld**, using **Flydigi Apex 4 (Wukong edition)** and **Vader 4 Pro** controllers. We confirmed the controllers' motion worked directly on Windows, then isolated inconsistent gyro orientation when streaming through Android. The solution grew into reusable controller identification, axis remapping, adjustable sensitivity and tools to understand the input a controller is actually reporting.
+This started as a practical attempt to solve exactly that problem on an **Astra 2 Android gaming handheld**, using **Flydigi Apex 4 (Wukong edition)** and **Vader 4 Pro** controllers. The controllers' motion worked as expected directly on Windows, but not when streaming through Android. The solution grew into reusable controller identification, axis remapping, adjustable sensitivity and tools to understand the input a controller is actually reporting.
 
 **The goal isn't to replace upstream Nightjar.** It's to make its Android game-streaming experience more useful to people who care about motion aiming, unusual controllers and troubleshooting input behavior. The project is built on upstream Nightjar 5.2.0 and retains its broader streaming feature set.
 
