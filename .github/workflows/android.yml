@@ -2,7 +2,7 @@ name: Android debug
 
 on:
   push:
-    branches: [main, integration/nightjar-5.2.0-flydigi]
+    branches: [main, integration/nightjar-5.2.0-flydigi, feature/custom-nightjar-release]
     # Docs, store listing and artwork sources don't change the APK.
     paths-ignore: ['**/*.md', 'docs/**', 'fastlane/**', 'store-assets/**', 'LICENSE.txt', '.github/ISSUE_TEMPLATE/**', '.github/scripts/**', '.github/workflows/issue-version-check.yml', '.github/*.yml']
   workflow_dispatch:
@@ -110,7 +110,7 @@ jobs:
       - name: Build both flavors
         run: >-
           bash gradlew --no-daemon --max-workers=4
-          :app:assembleNonRootDebug :app:assembleNonRootRelease :app:assembleRootRelease
+          :app:assembleNonRootDebug :app:assembleNonRootRelease :app:assembleRootRelease :app:assembleNonRootCustom
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: nightjar-debug
